@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build artifacts (we rebuild in Docker)
+dist/
+
+# Development files
+*.log
+*.local
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Test and coverage
+coverage/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Documentation (not needed in production image)
+*.md
+!README.md
+
+# Misc
+.dockerignore
+docker-compose*.yml
+Dockerfile*

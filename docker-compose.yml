@@ -1,0 +1,65 @@
+# Multi-Agent AI Workflow - Docker Compose Configuration
+# Run the entire stack with: docker-compose up
+
+services:
+  # MySQL Database
+  db:
+    image: mysql:8.0
+    container_name: multi-agent-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: multi_agent_workflow
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+    ports:
+      - "3307:3306"  # Use 3307 externally to avoid conflict with local MySQL
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+
+  # Application Server
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-agent-app
+    restart: unless-stopped
+    ports:
+      - "3005:3000"  # Use 3005 externally to avoid port conflicts
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Database connection - uses Docker network hostname 'db'
+      DATABASE_URL: mysql://appuser:apppassword@db:3306/multi_agent_workflow
+      # LLM Configuration
+      # For Ollama on host machine, use host.docker.internal (Docker Desktop)
+      # IMPORTANT: This overrides any .env value - localhost won't work from inside container
+      BUILT_IN_FORGE_API_URL: http://host.docker.internal:11434/v1
+      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-ollama}
+      # Security
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      # OAuth (optional - for Manus integration)
+      OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-}
+      OWNER_OPEN_ID: ${OWNER_OPEN_ID:-}
+      VITE_APP_ID: ${VITE_APP_ID:-multi-agent-workflow}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
