@@ -479,23 +479,31 @@ export class WorkflowEngine {
   private async handleExecutionError(error: unknown): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
-    // Mark run as failed
-    await this.updateRunStatus("failed", errorMessage);
+    // Mark run as failed – guard against secondary failures (e.g. run not found)
+    try {
+      await this.updateRunStatus("failed", errorMessage);
+    } catch (statusError) {
+      this.logError("Failed to mark run as failed", statusError);
+    }
 
-    // Save error as artifact for debugging
-    await this.saveArtifact(
-      "error",
-      JSON.stringify(
-        {
-          message: errorMessage,
-          timestamp: new Date().toISOString(),
-          artifacts: this.artifacts,
-        },
-        null,
-        2
-      ),
-      "application/json"
-    );
+    // Save error as artifact for debugging – guard against secondary failures
+    try {
+      await this.saveArtifact(
+        "error",
+        JSON.stringify(
+          {
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+            artifacts: this.artifacts,
+          },
+          null,
+          2
+        ),
+        "application/json"
+      );
+    } catch (artifactError) {
+      this.logError("Failed to save error artifact", artifactError);
+    }
   }
 
   /**
