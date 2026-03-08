@@ -112,6 +112,13 @@ vi.mock("./db.utils", () => {
       if (!agent || agent.userId !== userId) throw new Error("Agent not found");
       return agent;
     }),
+    updateAgentConfig: vi.fn(async (id: number, userId: number, updates: any) => {
+      const agent = mockAgents.get(id);
+      if (!agent || agent.userId !== userId) throw new Error("Agent not found");
+      const updated = { ...agent, ...updates, updatedAt: new Date() };
+      mockAgents.set(id, updated);
+      return [updated];
+    }),
   };
 });
 
@@ -540,6 +547,128 @@ describe("Workflow Router", () => {
       expect(getResult.success).toBe(true);
       expect(getResult.data).toBeDefined();
       expect(getResult.data.id).toBe(createResult.data[0].id);
+    });
+  });
+
+  // ── Error handling & edge cases ─────────────────────────────────────────
+  describe("Error Handling", () => {
+    describe("Workflow Config errors", () => {
+      it("returns success=false when getting a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns success=false when updating a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.update({
+          id: 99999,
+          name: "Should Not Exist",
+        });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns success=false when deleting a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.delete({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("Workflow Run errors", () => {
+      it("returns success=false when getting a non-existent run", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.runs.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("Agent Config errors", () => {
+      it("returns success=false when getting a non-existent agent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.agents.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns success=false when updating a non-existent agent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.agents.update({
+          id: 99999,
+          role: "New Role",
+        });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("User isolation", () => {
+      it("user B cannot read a config created by user A", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        const created = await callerA.workflow.configs.create({
+          name: "User A Config",
+          initialTask: "Task for user A",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        if (!created.data || !created.data[0]) {
+          throw new Error("Setup failed: could not create config");
+        }
+
+        const result = await callerB.workflow.configs.get({
+          id: created.data[0].id,
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it("user B cannot delete a config created by user A", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        const created = await callerA.workflow.configs.create({
+          name: "User A Config",
+          initialTask: "Task for user A",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        if (!created.data || !created.data[0]) {
+          throw new Error("Setup failed: could not create config");
+        }
+
+        const result = await callerB.workflow.configs.delete({
+          id: created.data[0].id,
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it("user B cannot see configs created by user A in the list", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        await callerA.workflow.configs.create({
+          name: "User A Config",
+          initialTask: "Task for user A",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        const result = await callerB.workflow.configs.list();
+
+        // User B's list should not contain User A's config
+        expect(result.data?.every((c) => c.name !== "User A Config")).toBe(
+          true
+        );
+      });
     });
   });
 });

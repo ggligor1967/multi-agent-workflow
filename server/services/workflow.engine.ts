@@ -10,6 +10,7 @@ import {
 } from "../agents";
 import * as dbUtils from "../db.utils";
 import { workflowEvents } from "../_core/ws";
+import { createLogger, type Logger } from "../_core/logger";
 
 /**
  * Workflow step names matching the schema and copilot-instructions.md
@@ -57,18 +58,20 @@ export class WorkflowEngine {
   private agents: Map<string, BaseAgent> = new Map();
   private stepRecords: Map<string, WorkflowStep> = new Map();
   private artifacts: Record<string, string> = {};
+  private logger: Logger;
 
   constructor(runId: number, userId: number, modelId?: string) {
     this.runId = runId;
     this.userId = userId;
     this.selectedModel = modelId;
+    this.logger = createLogger(`WorkflowEngine:${runId}`);
   }
 
   /**
    * Execute the complete workflow
    */
   async execute(): Promise<WorkflowExecutionResult> {
-    this.log("Starting workflow execution");
+    this.logger.info("Starting workflow execution");
 
     try {
       // Step 1: Setup
@@ -109,7 +112,7 @@ export class WorkflowEngine {
       // Mark run as completed
       await this.updateRunStatus("completed");
 
-      this.log("Workflow execution completed successfully");
+      this.logger.info("Workflow execution completed successfully");
 
       return {
         success: true,
@@ -117,7 +120,7 @@ export class WorkflowEngine {
         artifacts: this.artifacts,
       };
     } catch (error) {
-      this.logError("Workflow execution failed", error);
+      this.logger.error("Workflow execution failed", error);
       await this.handleExecutionError(error);
 
       return {
@@ -136,7 +139,7 @@ export class WorkflowEngine {
     stepName: WorkflowStepName,
     executor: () => Promise<void>
   ): Promise<void> {
-    this.log(`Starting step: ${stepName}`);
+    this.logger.info(`Starting step: ${stepName}`);
 
     // Create step record
     const stepRecord = await this.createStepRecord(stepName);
@@ -150,7 +153,7 @@ export class WorkflowEngine {
 
       // Mark step as completed
       await this.updateStepStatus(stepRecord.id, "completed");
-      this.log(`Step completed: ${stepName}`);
+      this.logger.info(`Step completed: ${stepName}`);
     } catch (error) {
       // Mark step as failed
       await this.updateStepStatus(
@@ -180,7 +183,7 @@ export class WorkflowEngine {
       );
     }
 
-    this.log(`Loaded workflow run: ${this.runId}`);
+    this.logger.info(`Loaded workflow run: ${this.runId}`);
   }
 
   /**
@@ -200,7 +203,7 @@ export class WorkflowEngine {
     // Create default configs for any missing agents
     await this.ensureDefaultAgentConfigs();
 
-    this.log(`Loaded ${this.agentConfigs.size} agent configurations`);
+    this.logger.info(`Loaded ${this.agentConfigs.size} agent configurations`);
   }
 
   /**
@@ -292,7 +295,7 @@ export class WorkflowEngine {
       new CriticalAnalystAgent(analystConfig)
     );
 
-    this.log("Agents initialized");
+    this.logger.info("Agents initialized");
   }
 
   /**
@@ -464,7 +467,7 @@ export class WorkflowEngine {
       mimeType,
     });
 
-    this.log(`Saved artifact: ${artifactType}`);
+    this.logger.info(`Saved artifact: ${artifactType}`);
 
     // Emit WebSocket event for real-time updates
     // The result from createArtifact returns a ResultSetHeader with insertId
@@ -474,45 +477,40 @@ export class WorkflowEngine {
   }
 
   /**
-   * Handle execution errors
+   * Handle execution errors.
+   *
+   * Each cleanup step (marking the run as failed, saving the error artifact) is
+   * independently guarded so a secondary database failure (e.g. DB unavailable)
+   * does not propagate out of `execute()` and hide the original error.
    */
   private async handleExecutionError(error: unknown): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
-    // Mark run as failed
-    await this.updateRunStatus("failed", errorMessage);
+    // Mark run as failed – guard against secondary failures (e.g. run not found in DB)
+    try {
+      await this.updateRunStatus("failed", errorMessage);
+    } catch (statusError) {
+      this.logger.error("Failed to mark run as failed", statusError);
+    }
 
-    // Save error as artifact for debugging
-    await this.saveArtifact(
-      "error",
-      JSON.stringify(
-        {
-          message: errorMessage,
-          timestamp: new Date().toISOString(),
-          artifacts: this.artifacts,
-        },
-        null,
-        2
-      ),
-      "application/json"
-    );
-  }
-
-  /**
-   * Logging utility
-   */
-  private log(message: string): void {
-    console.log(`[WorkflowEngine:${this.runId}] ${message}`);
-  }
-
-  /**
-   * Error logging utility
-   */
-  private logError(message: string, error: unknown): void {
-    console.error(
-      `[WorkflowEngine:${this.runId}] ${message}:`,
-      error instanceof Error ? error.message : error
-    );
+    // Save error as artifact for debugging – guard against secondary failures
+    try {
+      await this.saveArtifact(
+        "error",
+        JSON.stringify(
+          {
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+            artifacts: this.artifacts,
+          },
+          null,
+          2
+        ),
+        "application/json"
+      );
+    } catch (artifactError) {
+      this.logger.error("Failed to save error artifact", artifactError);
+    }
   }
 }
 
