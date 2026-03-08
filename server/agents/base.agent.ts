@@ -7,6 +7,7 @@ import {
   type InvokeResult,
   type ToolCall,
 } from "../_core/llm";
+import { createLogger, type Logger } from "../_core/logger";
 
 /**
  * Agent execution context passed to each agent invocation
@@ -44,6 +45,7 @@ export interface AgentResult {
 export abstract class BaseAgent {
   protected config: AgentConfig;
   protected conversationHistory: Message[] = [];
+  private logger?: Logger;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -204,20 +206,31 @@ Respond thoughtfully and stay focused on your specific role in the workflow.`;
   }
 
   /**
-   * Logging utility with agent prefix
+   * Logging utility with agent prefix.
+   * Delegates to the centralized logger for consistent output format.
    */
   protected log(message: string): void {
-    console.log(`[${this.agentType}] ${message}`);
+    this.getLogger().info(message);
   }
 
   /**
-   * Error logging utility
+   * Error logging utility.
+   * Delegates to the centralized logger for consistent output format.
    */
   protected logError(message: string, error: unknown): void {
-    console.error(
-      `[${this.agentType}] ${message}:`,
-      error instanceof Error ? error.message : error
-    );
+    this.getLogger().error(message, error);
+  }
+
+  /**
+   * Return (and lazily create) the centralized logger for this agent.
+   * Initialization is deferred because agentType is abstract and not available
+   * until the concrete subclass constructor has run.
+   */
+  private getLogger(): Logger {
+    if (!this.logger) {
+      this.logger = createLogger(this.agentType);
+    }
+    return this.logger;
   }
 
   /**
