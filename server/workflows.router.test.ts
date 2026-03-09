@@ -112,6 +112,13 @@ vi.mock("./db.utils", () => {
       if (!agent || agent.userId !== userId) throw new Error("Agent not found");
       return agent;
     }),
+    updateAgentConfig: vi.fn(async (id: number, userId: number, updates: Record<string, unknown>) => {
+      const agent = mockAgents.get(id);
+      if (!agent || agent.userId !== userId) throw new Error("Agent not found");
+      const updated = { ...agent, ...updates, updatedAt: new Date() };
+      mockAgents.set(id, updated);
+      return [updated];
+    }),
   };
 });
 
@@ -540,6 +547,153 @@ describe("Workflow Router", () => {
       expect(getResult.success).toBe(true);
       expect(getResult.data).toBeDefined();
       expect(getResult.data.id).toBe(createResult.data[0].id);
+    });
+  });
+
+  // ── Error handling & edge cases ─────────────────────────────────────────
+  describe("Error Handling", () => {
+    describe("Workflow Config errors", () => {
+      it("returns an error when getting a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns an error when updating a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.update({
+          id: 99999,
+          name: "Should Not Exist",
+        });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns an error when deleting a non-existent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.configs.delete({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("Workflow Run errors", () => {
+      it("returns an error when getting a non-existent run", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.runs.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("Agent Config errors", () => {
+      it("returns an error when getting a non-existent agent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.agents.get({ id: 99999 });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+
+      it("returns an error when updating a non-existent agent config", async () => {
+        const caller = appRouter.createCaller(ctx);
+        const result = await caller.workflow.agents.update({
+          id: 99999,
+          role: "New Role",
+        });
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("User isolation", () => {
+      it("user B cannot read a config created by user A", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        const created = await callerA.workflow.configs.create({
+          name: "User A Config",
+          initialTask: "Task for user A",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        if (!created.data || !created.data[0]) {
+          throw new Error("Setup failed: could not create config");
+        }
+
+        const result = await callerB.workflow.configs.get({
+          id: created.data[0].id,
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it("user B cannot delete a config created by user A", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        const created = await callerA.workflow.configs.create({
+          name: "User A Config",
+          initialTask: "Task for user A",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        if (!created.data || !created.data[0]) {
+          throw new Error("Setup failed: could not create config");
+        }
+
+        const result = await callerB.workflow.configs.delete({
+          id: created.data[0].id,
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it("user B cannot access an agent config created by user A", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(1));
+        const callerB = appRouter.createCaller(createAuthContext(2));
+
+        const created = await callerA.workflow.agents.create({
+          agentType: "nanoscript_generator" as const,
+          role: "User A Agent",
+          goal: "Private goal",
+          backstory: "Private backstory",
+          llmModel: "gpt-4",
+        });
+
+        if (!created.data || !created.data[0]) {
+          throw new Error("Setup failed: could not create agent config");
+        }
+
+        const result = await callerB.workflow.agents.get({
+          id: created.data[0].id,
+        });
+
+        expect(result.success).toBe(false);
+      });
+
+      it("listing configs returns only the requesting user's records", async () => {
+        const callerA = appRouter.createCaller(createAuthContext(10));
+        const callerB = appRouter.createCaller(createAuthContext(11));
+
+        await callerA.workflow.configs.create({
+          name: "User 10 Config",
+          initialTask: "User 10 task",
+          llmModel: "gpt-4",
+          mistralModel: "mistral",
+        });
+
+        const resultB = await callerB.workflow.configs.list();
+
+        expect(resultB.success).toBe(true);
+        // User B should not see user A's configs
+        const userAConfigs = resultB.data?.filter(
+          (c: { name: string }) => c.name === "User 10 Config"
+        );
+        expect(userAConfigs?.length).toBe(0);
+      });
     });
   });
 });

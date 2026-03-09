@@ -41,9 +41,10 @@
 - [x] Write unit tests for database utilities
 - [x] Write unit tests for tRPC routers (workflows.router.test.ts)
 - [x] Test workflow execution with multiple test cases (test-workflow.ts)
-- [ ] Write integration tests for workflow execution
+- [x] Write integration tests for workflow execution (workflow.engine.test.ts)
 - [ ] Test authentication and authorization
-- [ ] Test error handling and edge cases
+- [x] Test error handling and edge cases (workflows.router.test.ts, workflow.engine.test.ts)
+- [x] Write agent utility unit tests (agents/base.agent.test.ts)
 
 ## Deployment & Documentation
 - [x] Docker support with multi-stage Dockerfile and docker-compose.yml
