@@ -172,6 +172,16 @@ const defaultConfigs: LauncherConfig[] = [
 
 const defaultModels = ["deepseek-v3.1:671b-cloud", "llama3.2:latest"];
 
+async function expectTriggerLabel(
+  container: HTMLElement,
+  selector: string,
+  expectedText: string
+) {
+  await waitFor(() => {
+    expect(container.querySelector(selector)?.textContent ?? "").toContain(expectedText);
+  });
+}
+
 function renderLauncher(options: RenderOptions = {}) {
   const {
     search = "?configId=123",
@@ -261,10 +271,7 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
       ).toBe("Summarize release risks");
     });
 
-    const modelTrigger = container.querySelector("#model");
-    await waitFor(() => {
-      expect(modelTrigger?.textContent ?? "").toContain("deepseek-v3.1:671b-cloud");
-    });
+    await expectTriggerLabel(container, "#model", "deepseek-v3.1:671b-cloud");
 
     fireEvent.click(screen.getByRole("button", { name: /Launch Workflow/i }));
 
