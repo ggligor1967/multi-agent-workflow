@@ -10,6 +10,20 @@ import {
 } from "../agents";
 import * as dbUtils from "../db.utils";
 import { workflowEvents } from "../_core/ws";
+import { recordWorkflowRunEvent } from "./workflow.observability";
+
+// Basic secret scrubbing to avoid persisting sensitive tokens in artifacts
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/(bearer\s+)[A-Za-z0-9._\-]{10,}/gi, "$1[REDACTED]"],
+  [/aws_access_key_id\s*=\s*[A-Z0-9]{16,}/gi, "aws_access_key_id=[REDACTED]"],
+  [/aws_secret_access_key\s*=\s*[A-Za-z0-9\/+=]{20,}/gi, "aws_secret_access_key=[REDACTED]"],
+  [/(AKIA|ASIA)[A-Z0-9]{16}/g, "[REDACTED_AWS_KEY]"],
+  [/([A-Za-z0-9_-]*password[A-Za-z0-9_-]*|secret|token|api[_-]?key)\s*[:=]\s*["']?([^\s"']{12,})["']?/gi, "$1=[REDACTED]"],
+];
+
+const scrubSensitiveData = (content: string): string => {
+  return SECRET_PATTERNS.reduce((acc, [regex, replacement]) => acc.replace(regex, replacement), content);
+};
 
 /**
  * Workflow step names matching the schema and copilot-instructions.md
@@ -64,6 +78,24 @@ export class WorkflowEngine {
     this.selectedModel = modelId;
   }
 
+  private getDurationMs(
+    start: Date | string | null | undefined,
+    end: Date | string | null | undefined
+  ): number | null {
+    if (!start || !end) {
+      return null;
+    }
+
+    const startDate = start instanceof Date ? start : new Date(start);
+    const endDate = end instanceof Date ? end : new Date(end);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return null;
+    }
+
+    return Math.max(0, endDate.getTime() - startDate.getTime());
+  }
+
   /**
    * Execute the complete workflow
    */
@@ -71,6 +103,9 @@ export class WorkflowEngine {
     this.log("Starting workflow execution");
 
     try {
+      // Prevent duplicate or concurrent execution for the same run
+      await this.ensureRunIsStartable();
+
       // Step 1: Setup
       await this.executeStep(WORKFLOW_STEPS.SETUP, async () => {
         await this.loadWorkflowRun();
@@ -130,6 +165,24 @@ export class WorkflowEngine {
   }
 
   /**
+   * Ensure the run is in a state that can be started
+   */
+  private async ensureRunIsStartable(): Promise<void> {
+    const run = await dbUtils.getWorkflowRun(this.runId, this.userId);
+
+    if (run.status === "running") {
+      throw new Error(`Workflow run ${this.runId} is already running`);
+    }
+
+    if (run.status === "completed") {
+      throw new Error(`Workflow run ${this.runId} has already completed`);
+    }
+
+    // Allow pending and failed runs to be (re)started
+    this.workflowRun = run;
+  }
+
+  /**
    * Execute a single workflow step with status tracking
    */
   private async executeStep(
@@ -178,6 +231,10 @@ export class WorkflowEngine {
         this.workflowRun.configId,
         this.userId
       );
+    }
+
+    if (!this.selectedModel && this.workflowRun.selectedModel) {
+      this.selectedModel = this.workflowRun.selectedModel;
     }
 
     this.log(`Loaded workflow run: ${this.runId}`);
@@ -378,19 +435,11 @@ export class WorkflowEngine {
    * Create a workflow step record in the database
    */
   private async createStepRecord(stepName: string): Promise<WorkflowStep> {
-    await dbUtils.createWorkflowStep({
+    const step = await dbUtils.createWorkflowStep({
       runId: this.runId,
       stepName,
       status: "pending",
-    });
-
-    // Fetch the created record
-    const steps = await dbUtils.getWorkflowSteps(this.runId);
-    const step = steps.find((s: WorkflowStep) => s.stepName === stepName);
-
-    if (!step) {
-      throw new Error(`Failed to create step record: ${stepName}`);
-    }
+    }, this.userId);
 
     return step;
   }
@@ -404,24 +453,55 @@ export class WorkflowEngine {
     errorMessage?: string
   ): Promise<void> {
     const updates: Record<string, unknown> = { status };
+    const timestamp = new Date();
 
     if (status === "running") {
-      updates.startedAt = new Date();
+      updates.startedAt = timestamp;
     } else if (status === "completed" || status === "failed") {
-      updates.completedAt = new Date();
+      updates.completedAt = timestamp;
     }
 
     if (errorMessage) {
       updates.errorMessage = errorMessage;
     }
 
-    await dbUtils.updateWorkflowStep(stepId, updates);
+    const updatedStep = await dbUtils.updateWorkflowStep(stepId, this.userId, updates);
+    this.stepRecords.set(updatedStep.stepName, updatedStep);
+
+    const lifecycleEventType =
+      status === "running"
+        ? "step_started"
+        : status === "completed"
+          ? "step_completed"
+          : "step_failed";
+    const lifecycleMessage =
+      status === "running"
+        ? `Step ${updatedStep.stepName} started`
+        : status === "completed"
+          ? `Step ${updatedStep.stepName} completed`
+          : `Step ${updatedStep.stepName} failed`;
+
+    await recordWorkflowRunEvent({
+      runId: this.runId,
+      userId: this.userId,
+      source: "engine",
+      eventType: lifecycleEventType,
+      level: status === "failed" ? "error" : "info",
+      message: lifecycleMessage,
+      metadata: {
+        stepId: updatedStep.id,
+        stepName: updatedStep.stepName,
+        status,
+        durationMs:
+          status === "completed" || status === "failed"
+            ? this.getDurationMs(updatedStep.startedAt, updatedStep.completedAt)
+            : null,
+        errorMessage: errorMessage ?? null,
+      },
+    });
 
     // Emit WebSocket event for real-time updates
-    const step = Array.from(this.stepRecords.values()).find(s => s.id === stepId);
-    if (step) {
-      workflowEvents.emitStepUpdate(this.runId, step.stepName, status);
-    }
+    workflowEvents.emitStepUpdate(this.runId, updatedStep.stepName, status);
   }
 
   /**
@@ -432,11 +512,13 @@ export class WorkflowEngine {
     errorMessage?: string
   ): Promise<void> {
     const updates: Record<string, unknown> = { status };
+    const timestamp = new Date();
+    const previousRun = this.workflowRun;
 
     if (status === "running") {
-      updates.startedAt = new Date();
+      updates.startedAt = timestamp;
     } else if (status === "completed" || status === "failed") {
-      updates.completedAt = new Date();
+      updates.completedAt = timestamp;
     }
 
     if (errorMessage) {
@@ -444,6 +526,53 @@ export class WorkflowEngine {
     }
 
     await dbUtils.updateWorkflowRun(this.runId, this.userId, updates);
+
+    if (previousRun) {
+      this.workflowRun = {
+        ...previousRun,
+        ...updates,
+      } as WorkflowRun;
+    }
+
+    const lifecycleEventType =
+      status === "running"
+        ? "run_started"
+        : status === "completed"
+          ? "run_completed"
+          : status === "failed"
+            ? "run_failed"
+            : "run_pending";
+    const lifecycleMessage =
+      status === "running"
+        ? "Workflow run started"
+        : status === "completed"
+          ? "Workflow run completed"
+          : status === "failed"
+            ? "Workflow run failed"
+            : "Workflow run queued";
+
+    await recordWorkflowRunEvent({
+      runId: this.runId,
+      userId: this.userId,
+      source: "engine",
+      eventType: lifecycleEventType,
+      level: status === "failed" ? "error" : "info",
+      message: lifecycleMessage,
+      metadata: {
+        status,
+        selectedModel: this.selectedModel ?? this.workflowRun?.selectedModel ?? null,
+        queueLatencyMs:
+          status === "running"
+            ? this.getDurationMs(previousRun?.createdAt, timestamp)
+            : null,
+        executionDurationMs:
+          status === "completed" || status === "failed"
+            ? this.getDurationMs(previousRun?.startedAt, timestamp)
+            : null,
+        artifactCount: Object.keys(this.artifacts).length,
+        errorMessage: errorMessage ?? null,
+      },
+    });
 
     // Emit WebSocket event for real-time updates
     workflowEvents.emitRunStatusChanged(this.runId, status, errorMessage);
@@ -457,20 +586,32 @@ export class WorkflowEngine {
     content: string,
     mimeType: string = "text/markdown"
   ): Promise<void> {
-    const result = await dbUtils.createArtifact({
+    const sanitizedContent = scrubSensitiveData(content);
+    const artifact = await dbUtils.createArtifact({
       runId: this.runId,
       artifactType,
-      content,
+      content: sanitizedContent,
       mimeType,
-    });
+    }, this.userId);
 
     this.log(`Saved artifact: ${artifactType}`);
 
+    await recordWorkflowRunEvent({
+      runId: this.runId,
+      userId: this.userId,
+      source: "engine",
+      eventType: "artifact_saved",
+      message: `Saved artifact ${artifactType}`,
+      metadata: {
+        artifactId: artifact.id,
+        artifactType,
+        mimeType,
+        contentBytes: Buffer.byteLength(sanitizedContent, "utf8"),
+      },
+    });
+
     // Emit WebSocket event for real-time updates
-    // The result from createArtifact returns a ResultSetHeader with insertId
-    const insertResult = result as unknown as { insertId?: number };
-    const artifactId = insertResult?.insertId || 0;
-    workflowEvents.emitArtifactCreated(this.runId, artifactType, artifactId);
+    workflowEvents.emitArtifactCreated(this.runId, artifactType, artifact.id ?? 0);
   }
 
   /**
@@ -485,14 +626,16 @@ export class WorkflowEngine {
     // Save error as artifact for debugging
     await this.saveArtifact(
       "error",
-      JSON.stringify(
-        {
-          message: errorMessage,
-          timestamp: new Date().toISOString(),
-          artifacts: this.artifacts,
-        },
-        null,
-        2
+      scrubSensitiveData(
+        JSON.stringify(
+          {
+            message: errorMessage,
+            timestamp: new Date().toISOString(),
+            artifacts: this.artifacts,
+          },
+          null,
+          2
+        )
       ),
       "application/json"
     );
@@ -502,7 +645,16 @@ export class WorkflowEngine {
    * Logging utility
    */
   private log(message: string): void {
-    console.log(`[WorkflowEngine:${this.runId}] ${message}`);
+    console.log(
+      JSON.stringify({
+        scope: "workflow.engine",
+        timestamp: new Date().toISOString(),
+        runId: this.runId,
+        userId: this.userId,
+        selectedModel: this.selectedModel ?? this.workflowRun?.selectedModel ?? null,
+        message,
+      })
+    );
   }
 
   /**
@@ -510,8 +662,15 @@ export class WorkflowEngine {
    */
   private logError(message: string, error: unknown): void {
     console.error(
-      `[WorkflowEngine:${this.runId}] ${message}:`,
-      error instanceof Error ? error.message : error
+      JSON.stringify({
+        scope: "workflow.engine",
+        timestamp: new Date().toISOString(),
+        runId: this.runId,
+        userId: this.userId,
+        selectedModel: this.selectedModel ?? this.workflowRun?.selectedModel ?? null,
+        message,
+        error: error instanceof Error ? error.message : String(error),
+      })
     );
   }
 }

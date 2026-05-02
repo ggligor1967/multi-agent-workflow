@@ -15,6 +15,27 @@
       "when": 1767088356850,
       "tag": "0001_cheerful_invaders",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1767088450000,
+      "tag": "0002_schema_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1767092050000,
+      "tag": "0003_workflow_worker_decoupling",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1767095650000,
+      "tag": "0004_workflow_observability",
+      "breakpoints": true
     }
   ]
 }

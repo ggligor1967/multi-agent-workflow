@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { useWorkflows } from "@/_core/hooks/useWorkflows";
+import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,32 +9,27 @@ import { useLocation } from "wouter";
 
 export default function Dashboard() {
   const { user, isAuthenticated } = useAuth();
-  const { listRuns, listConfigs } = useWorkflows();
   const [, navigate] = useLocation();
 
-  const [runs, setRuns] = useState<any[]>([]);
-  const [configs, setConfigs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: runsResult, isLoading: isRunsLoading } = trpc.workflow.runs.list.useQuery(
+    { limit: 10, offset: 0 },
+    { enabled: isAuthenticated }
+  );
+
+  const { data: configsResult, isLoading: isConfigsLoading } = trpc.workflow.configs.list.useQuery(
+    undefined,
+    { enabled: isAuthenticated }
+  );
+
+  const runs = runsResult?.data ?? [];
+  const configs = configsResult?.data ?? [];
+  const loading = isRunsLoading || isConfigsLoading;
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate("/");
-      return;
     }
-
-    const loadData = async () => {
-      setLoading(true);
-      const [runsData, configsData] = await Promise.all([
-        listRuns(10, 0),
-        listConfigs(),
-      ]);
-      setRuns(runsData || []);
-      setConfigs(configsData || []);
-      setLoading(false);
-    };
-
-    loadData();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, navigate]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

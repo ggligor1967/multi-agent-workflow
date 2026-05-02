@@ -4,7 +4,8 @@
 services:
   # MySQL Database
   db:
-    image: mysql:8.0
+    image: mysql/mysql-server:8.0
+    platform: linux/amd64
     container_name: multi-agent-db
     restart: unless-stopped
     environment:
@@ -45,11 +46,41 @@ services:
       BUILT_IN_FORGE_API_URL: http://host.docker.internal:11434/v1
       BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-ollama}
       # Security
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       # OAuth (optional - for Manus integration)
       OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-}
       OWNER_OPEN_ID: ${OWNER_OPEN_ID:-}
       VITE_APP_ID: ${VITE_APP_ID:-multi-agent-workflow}
+      WORKFLOW_EMBEDDED_WORKER: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-agent-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q 'node dist/worker.js'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://appuser:apppassword@db:3306/multi_agent_workflow
+      BUILT_IN_FORGE_API_URL: http://host.docker.internal:11434/v1
+      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-ollama}
+      JWT_SECRET: ${JWT_SECRET}
+      OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-}
+      OWNER_OPEN_ID: ${OWNER_OPEN_ID:-}
+      VITE_APP_ID: ${VITE_APP_ID:-multi-agent-workflow}
+      WORKFLOW_EMBEDDED_WORKER: "false"
     depends_on:
       db:
         condition: service_healthy
