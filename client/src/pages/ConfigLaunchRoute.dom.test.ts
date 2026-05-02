@@ -61,208 +61,35 @@ vi.mock("sonner", () => ({
   },
 }));
 
+// Use real wouter with an in-memory location so Router/Route/Switch/useLocation/useSearch
+// are the real implementations — changes to App.tsx routing will be reflected in this test.
 vi.mock("wouter", async () => {
   const actual = await vi.importActual<typeof import("wouter")>("wouter");
   const { memoryLocation } = await import("wouter/memory-location");
-
-  const memory = memoryLocation({ path: "/" });
-
-  return {
-    ...actual,
-    Router: ({ children }: { children: React.ReactNode }) =>
-      createElement(actual.Router, { hook: memory.hook }, children),
-    useLocation: memory.hook,
-  };
-});
-
-  function useRouterContext() {
-    const context = React.useContext(RouterContext);
-    if (!context) {
-      throw new Error("wouter test router must be used inside Router");
-    }
-
-    return context;
-  }
-
-  function Router({
-    initialPath = "/",
-    children,
-  }: {
-    initialPath?: string;
-    children: React.ReactNode;
-  }) {
-    const [location, setLocation] = React.useState(initialPath);
-    const navigate = React.useCallback((to: string) => {
-      setLocation(to);
-    }, []);
-
-    const value = React.useMemo(
-      () => ({ location, navigate }),
-      [location, navigate]
-    );
-
-    return React.createElement(RouterContext.Provider, { value }, children);
-  }
-
-  function useLocation() {
-    const { location, navigate } = useRouterContext();
-    return [location, navigate] as const;
-  }
-
-  function useSearch() {
-    return getSearch(useRouterContext().location);
-  }
-
-  function Route({
-    path,
-    component: Component,
-    children,
-  }: {
-    path?: string;
-    component?: React.ComponentType;
-    children?: React.ReactNode | ((params: Record<string, string>) => React.ReactNode);
-  }) {
-    const pathname = getPathname(useRouterContext().location);
-    if (!matchesPath(pathname, path)) {
-      return null;
-    }
-
-    if (Component) {
-      return React.createElement(Component);
-    }
-
-    if (typeof children === "function") {
-      return children({});
-    }
-
-    return children ?? null;
-  }
-
-  function Switch({ children }: { children: React.ReactNode }) {
-    const pathname = getPathname(useRouterContext().location);
-    let fallback: React.ReactNode = null;
-
-    for (const child of React.Children.toArray(children)) {
-      if (!React.isValidElement<{ path?: string }>(child)) {
-        continue;
-      }
-
-      const childPath = child.props.path;
-      if (!childPath) {
-        fallback ??= child;
-        continue;
-      }
-
-      if (matchesPath(pathname, childPath)) {
-        return child;
-      }
-    }
-
-    return fallback;
-  }
-
-  return {
-    Router,
-    Route,
-    Switch,
-    useLocation,
-    useSearch,
-  };
-});
-
-vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
 
-  type SelectContextValue = {
-    value: string;
-    items: Map<string, string>;
-    registerItem: (value: string, label: string) => void;
-  };
-
-  const SelectContext = React.createContext<SelectContextValue | null>(null);
-
-  function useSelectContext() {
-    const context = React.useContext(SelectContext);
-    if (!context) {
-      throw new Error("Select components must be used inside Select");
+  function Router({
+    children,
+    initialPath = "/",
+  }: {
+    children: React.ReactNode;
+    initialPath?: string;
+  }) {
+    const memRef = React.useRef<ReturnType<typeof memoryLocation> | null>(null);
+    if (!memRef.current) {
+      memRef.current = memoryLocation({ path: initialPath });
     }
-    return context;
+    return React.createElement(actual.Router, { hook: memRef.current.hook }, children);
   }
 
-  function Select({ value = "", children }: { value?: string; children: React.ReactNode }) {
-    const [items, setItems] = React.useState<Map<string, string>>(new Map());
-
-    const registerItem = React.useCallback((itemValue: string, label: string) => {
-      setItems((previous) => {
-        if (previous.get(itemValue) === label) {
-          return previous;
-        }
-
-        const next = new Map(previous);
-        next.set(itemValue, label);
-        return next;
-      });
-    }, []);
-
-    const contextValue = React.useMemo(
-      () => ({ value, items, registerItem }),
-      [items, registerItem, value]
-    );
-
-    return React.createElement(SelectContext.Provider, { value: contextValue }, children);
-  }
-
-  function SelectTrigger({
-    children,
-    id,
-    disabled,
-  }: {
-    children: React.ReactNode;
-    id?: string;
-    disabled?: boolean;
-  }) {
-    return React.createElement("button", { type: "button", id, disabled }, children);
-  }
-
-  function SelectValue({ placeholder }: { placeholder?: string }) {
-    const context = useSelectContext();
-    const label = context.items.get(context.value) ?? placeholder ?? "";
-    return React.createElement("span", null, label);
-  }
-
-  function SelectContent({ children }: { children: React.ReactNode }) {
-    return React.createElement("div", { hidden: true }, children);
-  }
-
-  function SelectItem({
-    value,
-    children,
-  }: {
-    value: string;
-    children: React.ReactNode;
-  }) {
-    const context = useSelectContext();
-    const label = typeof children === "string" ? children : String(children ?? "");
-
-    React.useEffect(() => {
-      context.registerItem(value, label);
-    }, [context, label, value]);
-
-    return null;
-  }
-
-  return {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-  };
+  return { ...actual, Router };
 });
 
-import { Route, Router, Switch, useLocation } from "wouter";
-import ConfigManager from "./ConfigManager";
-import WorkflowLauncher from "./WorkflowLauncher";
+// Shared Select shim — avoids duplicating the bespoke jsdom stub across smoke tests.
+vi.mock("@/components/ui/select", () => import("./__test-helpers__/select-mock"));
+
+import { Router, useLocation, useSearch } from "wouter";
+import { AppRoutes } from "@/App";
 
 type SavedConfig = {
   id: number;
@@ -290,18 +117,12 @@ const savedConfig: SavedConfig = {
 
 const availableModels = ["llama3.2:latest", "deepseek-v3.1:671b-cloud"];
 
+/** Renders the real app route table so routing changes in App.tsx break this test. */
 function LocationProbe() {
   const [location] = useLocation();
-  return createElement("div", { "data-testid": "location" }, location);
-}
-
-function RouteHarness() {
-  return createElement(
-    Switch,
-    null,
-    createElement(Route, { path: "/configs", component: ConfigManager }),
-    createElement(Route, { path: "/launcher", component: WorkflowLauncher })
-  );
+  const search = useSearch();
+  const full = search ? `${location}?${search}` : location;
+  return createElement("div", { "data-testid": "location" }, full);
 }
 
 async function expectTriggerLabel(
@@ -345,7 +166,7 @@ function renderConfigLaunchFlow() {
     createElement(
       Router,
       { initialPath: "/configs" },
-      createElement(RouteHarness),
+      createElement(AppRoutes),
       createElement(LocationProbe)
     )
   );
