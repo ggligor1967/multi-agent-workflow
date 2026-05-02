@@ -9,7 +9,7 @@ export type TrpcContext = {
 };
 
 // Dev user for local development without OAuth
-const DEV_USER: User = {
+export const DEV_USER: User = {
   id: 1,
   openId: "dev-user-local",
   name: "Dev User",

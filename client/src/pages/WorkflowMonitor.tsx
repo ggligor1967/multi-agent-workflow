@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Activity,
   Loader2,
   ArrowLeft,
   CheckCircle,
@@ -22,6 +23,51 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect, useMemo, useState, useCallback } from "react";
+
+function formatDuration(durationMs: number | null | undefined): string {
+  if (durationMs == null) {
+    return "—";
+  }
+
+  if (durationMs < 1000) {
+    return `${durationMs}ms`;
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+function formatMetadataValue(value: unknown): string {
+  if (value == null) {
+    return "—";
+  }
+
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  return JSON.stringify(value);
+}
 
 /**
  * Step configuration for display
@@ -93,6 +139,8 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
   const run = queryResult?.data?.run;
   const steps = queryResult?.data?.steps || [];
   const artifacts = queryResult?.data?.artifacts || [];
+  const events = queryResult?.data?.events || [];
+  const metrics = queryResult?.data?.metrics;
 
   // Determine if workflow is still in progress
   const isInProgress = run?.status === "pending" || run?.status === "running";
@@ -153,6 +201,12 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
       };
     });
   }, [steps]);
+
+  const stepMetrics = useMemo(() => {
+    return new Map(
+      (metrics?.stepDurations || []).map(metric => [metric.stepName, metric])
+    );
+  }, [metrics]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -325,6 +379,64 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
           </CardContent>
         </Card>
 
+        {/* Observability */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="w-5 h-5" />
+              Lifecycle Observability
+            </CardTitle>
+            <CardDescription>
+              Queue latency, runtime, and worker lifecycle signals for this run
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <p className="text-gray-600">Queue wait</p>
+                <p className="font-medium">
+                  {formatDuration(metrics?.queueLatencyMs ?? metrics?.currentQueueAgeMs)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-600">Execution time</p>
+                <p className="font-medium">
+                  {formatDuration(
+                    metrics?.executionDurationMs ?? metrics?.currentExecutionAgeMs
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-600">First artifact</p>
+                <p className="font-medium">
+                  {formatDuration(metrics?.timeToFirstArtifactMs)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-600">Lifecycle span</p>
+                <p className="font-medium">
+                  {formatDuration(metrics?.totalLifecycleDurationMs)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-600">Event volume</p>
+                <p className="font-medium">{metrics?.totalEventCount ?? 0} events</p>
+              </div>
+              <div>
+                <p className="text-gray-600">Warnings / errors</p>
+                <p className="font-medium">
+                  {metrics?.warningEventCount ?? 0} / {metrics?.errorEventCount ?? 0}
+                </p>
+              </div>
+            </div>
+            {metrics?.lastEventAt && (
+              <p className="text-xs text-gray-500">
+                Last lifecycle event: {new Date(metrics.lastEventAt).toLocaleString()}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Agent Steps */}
         <Card className="mb-6">
           <CardHeader>
@@ -405,6 +517,11 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
                               {new Date(item.step.completedAt).toLocaleTimeString()}
                             </span>
                           )}
+                          {stepMetrics.get(item.stepName)?.durationMs != null && (
+                            <span>
+                              Duration: {formatDuration(stepMetrics.get(item.stepName)?.durationMs)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -414,6 +531,70 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
             </div>
           </CardContent>
         </Card>
+
+        {/* Lifecycle Timeline */}
+        {events.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Lifecycle Timeline</CardTitle>
+              <CardDescription>
+                Persisted worker and engine events for this workflow run
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-80 rounded-md border">
+                <div className="divide-y">
+                  {events.map(
+                    (event: {
+                      id: number;
+                      level: string;
+                      source: string;
+                      eventType: string;
+                      message: string;
+                      metadata?: Record<string, unknown> | null;
+                      createdAt: Date | string;
+                    }) => {
+                      const metadataEntries = Object.entries(event.metadata || {})
+                        .filter(([, value]) => value !== null && value !== undefined)
+                        .slice(0, 4);
+
+                      return (
+                        <div key={event.id} className="p-4 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge className={getStatusColor(event.level === "error" ? "failed" : event.level === "warn" ? "pending" : "running")}>
+                              {event.level.toUpperCase()}
+                            </Badge>
+                            <span className="text-sm font-medium text-gray-900">
+                              {event.message}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {event.source} • {event.eventType}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {new Date(event.createdAt).toLocaleString()}
+                          </div>
+                          {metadataEntries.length > 0 && (
+                            <div className="flex flex-wrap gap-2 text-xs text-gray-600">
+                              {metadataEntries.map(([key, value]) => (
+                                <span
+                                  key={key}
+                                  className="rounded-full bg-gray-100 px-2 py-1"
+                                >
+                                  {key}: {formatMetadataValue(value)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Artifacts */}
         {artifacts.length > 0 && (
@@ -452,19 +633,9 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
                             {artifact.content}
                           </pre>
                         ) : artifact.artifactType === "analysis" ? (
-                          <div className="prose prose-sm dark:prose-invert max-w-none">
-                            <div 
-                              className="text-sm"
-                              dangerouslySetInnerHTML={{ 
-                                __html: artifact.content
-                                  .replace(/## /g, '<h2 class="text-lg font-bold mt-4 mb-2">')
-                                  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-                                  .replace(/---/g, '<hr class="my-4 border-gray-200"/>')
-                                  .replace(/\n- /g, '<br/>• ')
-                                  .replace(/\n/g, '<br/>')
-                              }} 
-                            />
-                          </div>
+                          <pre className="text-sm whitespace-pre-wrap font-sans bg-gray-50 p-4 rounded-lg text-gray-800">
+                            {artifact.content}
+                          </pre>
                         ) : (
                           <pre className="text-sm whitespace-pre-wrap font-mono">
                             {artifact.content}

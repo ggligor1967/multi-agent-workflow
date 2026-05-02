@@ -1,9 +1,11 @@
 import { EventEmitter } from "events";
-import type { Server as HTTPServer } from "http";
+import type { IncomingMessage, Server as HTTPServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { applyWSSHandler } from "@trpc/server/adapters/ws";
 import type { appRouter } from "../routers";
-import { createContext } from "./context";
+import { DEV_USER } from "./context";
+import { sdk } from "./sdk";
+import type { User } from "../../drizzle/schema";
 
 /**
  * Workflow event types for real-time updates
@@ -11,6 +13,7 @@ import { createContext } from "./context";
 export type WorkflowEventType =
   | "step_update"
   | "artifact_created"
+  | "lifecycle_event"
   | "run_status_changed"
   | "run_completed"
   | "run_failed";
@@ -28,6 +31,9 @@ export interface WorkflowEvent {
     artifactId?: number;
     status?: string;
     errorMessage?: string;
+    lifecycleEventType?: string;
+    lifecycleEventLevel?: string;
+    message?: string;
     timestamp: string;
   };
 }
@@ -89,6 +95,32 @@ class WorkflowEventEmitter extends EventEmitter {
   }
 
   /**
+   * Emit a lifecycle event update
+   */
+  emitLifecycleEvent(
+    runId: number,
+    lifecycleEventType: string,
+    lifecycleEventLevel: string,
+    message: string
+  ): void {
+    const event: WorkflowEvent = {
+      type: "lifecycle_event",
+      runId,
+      data: {
+        lifecycleEventType,
+        lifecycleEventLevel,
+        message,
+        timestamp: new Date().toISOString(),
+      },
+    };
+    this.emit(`workflow:${runId}`, event);
+    this.emit("workflow:all", event);
+    console.log(
+      `[WS] Lifecycle event: run=${runId}, event=${lifecycleEventType}, level=${lifecycleEventLevel}`
+    );
+  }
+
+  /**
    * Emit a run status changed event
    */
   emitRunStatusChanged(runId: number, status: string, errorMessage?: string): void {
@@ -115,6 +147,21 @@ export const workflowEvents = WorkflowEventEmitter.getInstance();
  */
 let wssHandler: ReturnType<typeof applyWSSHandler<typeof appRouter>> | null = null;
 
+async function authenticateWebSocket(req: IncomingMessage): Promise<User | null> {
+  try {
+    return await sdk.authenticateRequest(req as any);
+  } catch {
+    const isDev = process.env.NODE_ENV !== "production";
+    const oauthConfigured = !!process.env.OAUTH_SERVER_URL;
+
+    if (isDev && !oauthConfigured) {
+      return DEV_USER;
+    }
+
+    return null;
+  }
+}
+
 /**
  * Set up WebSocket server for tRPC subscriptions
  */
@@ -130,8 +177,8 @@ export function setupWebSocketServer(httpServer: HTTPServer, router: typeof appR
     wss,
     router,
     createContext: async (opts) => {
-      // For WebSocket connections, we create a minimal context
-      // Real auth would need to be handled via connection params or cookies
+      const user = await authenticateWebSocket(opts.req);
+
       return {
         req: {
           protocol: "wss",
@@ -142,7 +189,7 @@ export function setupWebSocketServer(httpServer: HTTPServer, router: typeof appR
           },
         } as any,
         res: {} as any,
-        user: null, // WebSocket connections start unauthenticated
+        user,
       };
     },
   });

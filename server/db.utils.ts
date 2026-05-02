@@ -3,15 +3,17 @@ import {
   workflowConfigs,
   workflowRuns,
   workflowSteps,
+  workflowRunEvents,
   artifacts,
   agentConfigs,
   InsertWorkflowConfig,
   InsertWorkflowRun,
   InsertWorkflowStep,
+  InsertWorkflowRunEvent,
   InsertArtifact,
   InsertAgentConfig,
 } from "../drizzle/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, asc, lt, gte, inArray } from "drizzle-orm";
 
 /**
  * Workflow Configuration Operations
@@ -122,6 +124,62 @@ export async function getWorkflowRuns(userId: number, limit = 50, offset = 0) {
     .offset(offset);
 }
 
+export async function countRecentWorkflowRuns(userId: number, createdAfter: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const runs = await db
+    .select({ id: workflowRuns.id })
+    .from(workflowRuns)
+    .where(
+      and(
+        eq(workflowRuns.userId, userId),
+        gte(workflowRuns.createdAt, createdAfter)
+      )
+    );
+
+  return runs.length;
+}
+
+export async function countActiveWorkflowRuns(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const runs = await db
+    .select({ id: workflowRuns.id })
+    .from(workflowRuns)
+    .where(
+      and(
+        eq(workflowRuns.userId, userId),
+        inArray(workflowRuns.status, ["pending", "running"])
+      )
+    );
+
+  return runs.length;
+}
+
+export async function getPendingWorkflowRuns(limit = 10) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db
+    .select()
+    .from(workflowRuns)
+    .where(eq(workflowRuns.status, "pending"))
+    .orderBy(asc(workflowRuns.createdAt))
+    .limit(limit);
+}
+
+export async function getStaleRunningWorkflowRuns(staleBefore: Date, limit = 10) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db
+    .select()
+    .from(workflowRuns)
+    .where(and(eq(workflowRuns.status, "running"), lt(workflowRuns.updatedAt, staleBefore)))
+    .orderBy(asc(workflowRuns.updatedAt))
+    .limit(limit);
+}
+
 export async function getWorkflowRun(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -136,6 +194,10 @@ export async function getWorkflowRun(id: number, userId: number) {
   }
 
   return result[0];
+}
+
+export async function assertRunOwner(runId: number, userId: number) {
+  return getWorkflowRun(runId, userId);
 }
 
 export async function updateWorkflowRun(
@@ -154,16 +216,74 @@ export async function updateWorkflowRun(
     .where(eq(workflowRuns.id, id));
 }
 
+export async function createWorkflowRunEvent(
+  runId: number,
+  userId: number,
+  event: Omit<InsertWorkflowRunEvent, "runId">
+) {
+  await assertRunOwner(runId, userId);
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db
+    .insert(workflowRunEvents)
+    .values({
+      ...event,
+      runId,
+    })
+    .$returningId();
+
+  const id = result[0]?.id;
+  if (!id) throw new Error("Failed to create workflow run event");
+
+  const created = await db
+    .select()
+    .from(workflowRunEvents)
+    .where(eq(workflowRunEvents.id, id))
+    .limit(1);
+
+  return created[0];
+}
+
+export async function listWorkflowRunEvents(runId: number, userId: number, limit = 100) {
+  await assertRunOwner(runId, userId);
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db
+    .select()
+    .from(workflowRunEvents)
+    .where(eq(workflowRunEvents.runId, runId))
+    .orderBy(desc(workflowRunEvents.createdAt), desc(workflowRunEvents.id))
+    .limit(limit);
+}
+
 /**
  * Workflow Step Operations
  */
-export async function createWorkflowStep(step: InsertWorkflowStep) {
+export async function createWorkflowStep(step: InsertWorkflowStep, userId: number) {
+  await assertRunOwner(step.runId, userId);
+
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db.insert(workflowSteps).values(step);
+  const result = await db.insert(workflowSteps).values(step).$returningId();
+  const id = result[0]?.id;
+  if (!id) throw new Error("Failed to create workflow step");
+
+  const created = await db
+    .select()
+    .from(workflowSteps)
+    .where(eq(workflowSteps.id, id))
+    .limit(1);
+
+  return created[0];
 }
 
-export async function getWorkflowSteps(runId: number) {
+export async function getWorkflowSteps(runId: number, userId: number) {
+  await assertRunOwner(runId, userId);
+
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return await db
@@ -175,26 +295,62 @@ export async function getWorkflowSteps(runId: number) {
 
 export async function updateWorkflowStep(
   id: number,
+  userId: number,
   updates: Partial<InsertWorkflowStep>
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db
+
+  const existing = await db
+    .select()
+    .from(workflowSteps)
+    .where(eq(workflowSteps.id, id))
+    .limit(1);
+
+  if (existing.length === 0) {
+    throw new Error("Workflow step not found");
+  }
+
+  await assertRunOwner(existing[0].runId, userId);
+
+  await db
     .update(workflowSteps)
     .set(updates)
     .where(eq(workflowSteps.id, id));
+
+  const updated = await db
+    .select()
+    .from(workflowSteps)
+    .where(eq(workflowSteps.id, id))
+    .limit(1);
+
+  return updated[0];
 }
 
 /**
  * Artifact Operations
  */
-export async function createArtifact(artifact: InsertArtifact) {
+export async function createArtifact(artifact: InsertArtifact, userId: number) {
+  await assertRunOwner(artifact.runId, userId);
+
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return await db.insert(artifacts).values(artifact);
+  const result = await db.insert(artifacts).values(artifact).$returningId();
+  const id = result[0]?.id;
+  if (!id) throw new Error("Failed to create artifact");
+
+  const created = await db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.id, id))
+    .limit(1);
+
+  return created[0];
 }
 
-export async function getArtifacts(runId: number) {
+export async function getArtifacts(runId: number, userId: number) {
+  await assertRunOwner(runId, userId);
+
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return await db
@@ -204,7 +360,13 @@ export async function getArtifacts(runId: number) {
     .orderBy(artifacts.createdAt);
 }
 
-export async function getArtifactsByType(runId: number, artifactType: string) {
+export async function getArtifactsByType(
+  runId: number,
+  artifactType: string,
+  userId: number
+) {
+  await assertRunOwner(runId, userId);
+
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return await db

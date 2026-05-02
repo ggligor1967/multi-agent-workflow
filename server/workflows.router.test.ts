@@ -1,11 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { appRouter } from "./routers";
+import * as dbUtils from "./db.utils";
 import type { TrpcContext } from "./_core/context";
 
-// Mock services module (executeWorkflow)
-vi.mock("./services", () => ({
-  executeWorkflow: vi.fn(async () => ({ success: true, artifacts: {} })),
+vi.mock("./_core/llm", () => ({
+  fetchAvailableModels: vi.fn(async () => ["llama3.2", "mistral-small", "mistral"]),
 }));
+
+// Keep the real observability helpers while allowing service mocking where needed.
+vi.mock("./services", async () => {
+  const actual = await vi.importActual<typeof import("./services")>("./services");
+  return {
+    ...actual,
+    executeWorkflow: vi.fn(async () => ({ success: true, artifacts: {} })),
+  };
+});
 
 // Mock db.utils module
 vi.mock("./db.utils", () => {
@@ -13,13 +22,27 @@ vi.mock("./db.utils", () => {
   const mockConfigs: Map<number, any> = new Map();
   const mockRuns: Map<number, any> = new Map();
   const mockSteps: Map<number, any> = new Map();
+  const mockRunEvents: Map<number, any> = new Map();
   const mockArtifacts: Map<number, any> = new Map();
   const mockAgents: Map<number, any> = new Map();
   let configIdCounter = 1;
   let runIdCounter = 1;
   let stepIdCounter = 1;
+  let runEventIdCounter = 1;
   let artifactIdCounter = 1;
   let agentIdCounter = 1;
+
+  const ensureRunOwner = (runId: number, userId: number) => {
+    const run = mockRuns.get(runId);
+    if (!run || run.userId !== userId) throw new Error("Workflow run not found");
+    return run;
+  };
+
+  const getStepById = (id: number) => {
+    const step = mockSteps.get(id);
+    if (!step) throw new Error("Workflow step not found");
+    return step;
+  };
 
   return {
     createWorkflowConfig: vi.fn(async (userId: number, config: any) => {
@@ -58,44 +81,76 @@ vi.mock("./db.utils", () => {
     getWorkflowRuns: vi.fn(async (userId: number) => {
       return Array.from(mockRuns.values()).filter(r => r.userId === userId);
     }),
+    countRecentWorkflowRuns: vi.fn(async (userId: number, createdAfter: Date) => {
+      return Array.from(mockRuns.values()).filter(
+        run => run.userId === userId && run.createdAt >= createdAfter
+      ).length;
+    }),
+    countActiveWorkflowRuns: vi.fn(async (userId: number) => {
+      return Array.from(mockRuns.values()).filter(
+        run => run.userId === userId && (run.status === "pending" || run.status === "running")
+      ).length;
+    }),
     getWorkflowRun: vi.fn(async (id: number, userId: number) => {
       const run = mockRuns.get(id);
-      if (!run || run.userId !== userId) throw new Error("Run not found");
+      if (!run || run.userId !== userId) throw new Error("Workflow run not found");
       return run;
+    }),
+    assertRunOwner: vi.fn(async (runId: number, userId: number) => {
+      return ensureRunOwner(runId, userId);
     }),
     updateWorkflowRun: vi.fn(async (id: number, userId: number, updates: any) => {
       const run = mockRuns.get(id);
-      if (!run || run.userId !== userId) throw new Error("Run not found");
+      if (!run || run.userId !== userId) throw new Error("Workflow run not found");
       const updated = { ...run, ...updates, updatedAt: new Date() };
       mockRuns.set(id, updated);
       return updated;
     }),
-    createWorkflowStep: vi.fn(async (step: any) => {
+    createWorkflowRunEvent: vi.fn(async (runId: number, userId: number, event: any) => {
+      ensureRunOwner(runId, userId);
+      const id = runEventIdCounter++;
+      const record = { id, runId, ...event, createdAt: new Date() };
+      mockRunEvents.set(id, record);
+      return record;
+    }),
+    listWorkflowRunEvents: vi.fn(async (runId: number, userId: number, limit: number = 100) => {
+      ensureRunOwner(runId, userId);
+      return Array.from(mockRunEvents.values())
+        .filter(event => event.runId === runId)
+        .sort((left, right) => right.id - left.id)
+        .slice(0, limit);
+    }),
+    createWorkflowStep: vi.fn(async (step: any, userId: number) => {
+      ensureRunOwner(step.runId, userId);
       const id = stepIdCounter++;
       const record = { id, ...step, createdAt: new Date() };
       mockSteps.set(id, record);
-      return [record];
+      return record;
     }),
-    getWorkflowSteps: vi.fn(async (runId: number) => {
+    getWorkflowSteps: vi.fn(async (runId: number, userId: number) => {
+      ensureRunOwner(runId, userId);
       return Array.from(mockSteps.values()).filter(s => s.runId === runId);
     }),
-    updateWorkflowStep: vi.fn(async (id: number, updates: any) => {
-      const step = mockSteps.get(id);
-      if (!step) throw new Error("Step not found");
+    updateWorkflowStep: vi.fn(async (id: number, userId: number, updates: any) => {
+      const step = getStepById(id);
+      ensureRunOwner(step.runId, userId);
       const updated = { ...step, ...updates };
       mockSteps.set(id, updated);
       return updated;
     }),
-    createArtifact: vi.fn(async (artifact: any) => {
+    createArtifact: vi.fn(async (artifact: any, userId: number) => {
+      ensureRunOwner(artifact.runId, userId);
       const id = artifactIdCounter++;
       const record = { id, ...artifact, createdAt: new Date() };
       mockArtifacts.set(id, record);
-      return [record];
+      return record;
     }),
-    getArtifacts: vi.fn(async (runId: number) => {
+    getArtifacts: vi.fn(async (runId: number, userId: number) => {
+      ensureRunOwner(runId, userId);
       return Array.from(mockArtifacts.values()).filter(a => a.runId === runId);
     }),
-    getArtifactsByType: vi.fn(async (runId: number, type: string) => {
+    getArtifactsByType: vi.fn(async (runId: number, type: string, userId: number) => {
+      ensureRunOwner(runId, userId);
       return Array.from(mockArtifacts.values()).filter(a => a.runId === runId && a.artifactType === type);
     }),
     createAgentConfig: vi.fn(async (userId: number, config: any) => {
@@ -118,6 +173,20 @@ vi.mock("./db.utils", () => {
       const updated = { ...agent, ...updates, updatedAt: new Date() };
       mockAgents.set(id, updated);
       return [updated];
+    }),
+    __resetWorkflowRouterTestState: vi.fn(() => {
+      mockConfigs.clear();
+      mockRuns.clear();
+      mockSteps.clear();
+      mockRunEvents.clear();
+      mockArtifacts.clear();
+      mockAgents.clear();
+      configIdCounter = 1;
+      runIdCounter = 1;
+      stepIdCounter = 1;
+      runEventIdCounter = 1;
+      artifactIdCounter = 1;
+      agentIdCounter = 1;
     }),
   };
 });
@@ -148,6 +217,7 @@ describe("Workflow Router", () => {
   let ctx: TrpcContext;
 
   beforeEach(() => {
+    (dbUtils as unknown as { __resetWorkflowRouterTestState: () => void }).__resetWorkflowRouterTestState();
     ctx = createAuthContext();
   });
 
@@ -239,6 +309,7 @@ describe("Workflow Router", () => {
       const caller = appRouter.createCaller(ctx);
       const runData = {
         initialTask: "Generate a Python script for data processing",
+        modelId: "mistral-small",
       };
 
       const result = await caller.workflow.runs.create(runData);
@@ -247,6 +318,7 @@ describe("Workflow Router", () => {
       expect(result.data).toBeDefined();
       expect(result.data.status).toBe("pending");
       expect(result.data.initialTask).toBe(runData.initialTask);
+      expect(result.data.selectedModel).toBe(runData.modelId);
     });
 
     it("should list workflow runs", async () => {
@@ -288,6 +360,9 @@ describe("Workflow Router", () => {
       expect(getResult.success).toBe(true);
       expect(getResult.data.run).toBeDefined();
       expect(getResult.data.run.id).toBe(createResult.data.id);
+      expect(Array.isArray(getResult.data.events)).toBe(true);
+      expect(getResult.data.events[0]?.eventType).toBe("run_queued");
+      expect(getResult.data.metrics.totalEventCount).toBeGreaterThan(0);
     });
 
     it("should update workflow run status", async () => {
@@ -310,6 +385,62 @@ describe("Workflow Router", () => {
 
       expect(updateResult.success).toBe(true);
       expect(updateResult.data?.status).toBe("running");
+    });
+
+    it("should reject a run with an unavailable model", async () => {
+      const caller = appRouter.createCaller(ctx);
+
+      const result = await caller.workflow.runs.create({
+        initialTask: "Test task",
+        modelId: "non-existent-model",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("not available");
+    });
+
+    it("should reject new runs when the active-run limit is exceeded", async () => {
+      const caller = appRouter.createCaller(ctx);
+
+      for (let index = 0; index < 25; index += 1) {
+        const result = await caller.workflow.runs.create({
+          initialTask: `Queued task ${index}`,
+        });
+
+        expect(result.success).toBe(true);
+      }
+
+      const blockedResult = await caller.workflow.runs.create({
+        initialTask: "Blocked task",
+      });
+
+      expect(blockedResult.success).toBe(false);
+      expect(blockedResult.error).toContain("Too many active workflow runs");
+    });
+
+    it("should reject new runs when the create-rate limit is exceeded", async () => {
+      const caller = appRouter.createCaller(ctx);
+
+      for (let index = 0; index < 30; index += 1) {
+        const createResult = await caller.workflow.runs.create({
+          initialTask: `Completed task ${index}`,
+        });
+
+        expect(createResult.success).toBe(true);
+        expect(createResult.data).toBeDefined();
+
+        await caller.workflow.runs.updateStatus({
+          id: createResult.data!.id,
+          status: "completed",
+        });
+      }
+
+      const blockedResult = await caller.workflow.runs.create({
+        initialTask: "Rate limited task",
+      });
+
+      expect(blockedResult.success).toBe(false);
+      expect(blockedResult.error).toContain("Rate limit exceeded");
     });
   });
 
@@ -334,8 +465,7 @@ describe("Workflow Router", () => {
 
       expect(stepResult.success).toBe(true);
       expect(stepResult.data).toBeDefined();
-      expect(Array.isArray(stepResult.data)).toBe(true);
-      expect(stepResult.data[0].stepName).toBe("setup");
+      expect(stepResult.data.stepName).toBe("setup");
     });
 
     it("should list workflow steps", async () => {
@@ -382,13 +512,13 @@ describe("Workflow Router", () => {
         stepName: "setup",
       });
 
-      if (!stepResult.data || !stepResult.data[0]) {
+      if (!stepResult.data) {
         throw new Error("Failed to create step");
       }
 
       // Update step status
       const updateResult = await caller.workflow.steps.updateStatus({
-        id: stepResult.data[0].id,
+        id: stepResult.data.id,
         status: "completed",
         output: "Setup completed successfully",
       });
@@ -396,6 +526,62 @@ describe("Workflow Router", () => {
       expect(updateResult.success).toBe(true);
       expect(updateResult.data?.status).toBe("completed");
       expect(updateResult.data?.output).toBe("Setup completed successfully");
+    });
+
+    it("should prevent listing another user's steps", async () => {
+      const ownerCaller = appRouter.createCaller(createAuthContext(1));
+      const attackerCaller = appRouter.createCaller(createAuthContext(2));
+
+      const runResult = await ownerCaller.workflow.runs.create({
+        initialTask: "Owner task",
+      });
+
+      if (!runResult.data) {
+        throw new Error("Failed to create run");
+      }
+
+      await ownerCaller.workflow.steps.create({
+        runId: runResult.data.id,
+        stepName: "setup",
+      });
+
+      const listResult = await attackerCaller.workflow.steps.list({
+        runId: runResult.data.id,
+      });
+
+      expect(listResult.success).toBe(false);
+      expect(listResult.error).toBe("Workflow run not found");
+    });
+
+    it("should prevent updating another user's step", async () => {
+      const ownerCaller = appRouter.createCaller(createAuthContext(1));
+      const attackerCaller = appRouter.createCaller(createAuthContext(2));
+
+      const runResult = await ownerCaller.workflow.runs.create({
+        initialTask: "Owner task",
+      });
+
+      if (!runResult.data) {
+        throw new Error("Failed to create run");
+      }
+
+      const stepResult = await ownerCaller.workflow.steps.create({
+        runId: runResult.data.id,
+        stepName: "setup",
+      });
+
+      if (!stepResult.data) {
+        throw new Error("Failed to create step");
+      }
+
+      const updateResult = await attackerCaller.workflow.steps.updateStatus({
+        id: stepResult.data.id,
+        status: "failed",
+        errorMessage: "tampered",
+      });
+
+      expect(updateResult.success).toBe(false);
+      expect(updateResult.error).toBe("Workflow run not found");
     });
   });
 
@@ -421,8 +607,7 @@ describe("Workflow Router", () => {
 
       expect(artifactResult.success).toBe(true);
       expect(artifactResult.data).toBeDefined();
-      expect(Array.isArray(artifactResult.data)).toBe(true);
-      expect(artifactResult.data[0].artifactType).toBe("nanoscript");
+      expect(artifactResult.data.artifactType).toBe("nanoscript");
     });
 
     it("should list artifacts by run", async () => {
@@ -480,6 +665,54 @@ describe("Workflow Router", () => {
       expect(typeResult.success).toBe(true);
       expect(Array.isArray(typeResult.data)).toBe(true);
       expect(typeResult.data.length).toBeGreaterThan(0);
+    });
+
+    it("should prevent listing another user's artifacts", async () => {
+      const ownerCaller = appRouter.createCaller(createAuthContext(1));
+      const attackerCaller = appRouter.createCaller(createAuthContext(2));
+
+      const runResult = await ownerCaller.workflow.runs.create({
+        initialTask: "Owner task",
+      });
+
+      if (!runResult.data) {
+        throw new Error("Failed to create run");
+      }
+
+      await ownerCaller.workflow.artifacts.create({
+        runId: runResult.data.id,
+        artifactType: "analysis",
+        content: "secret analysis",
+      });
+
+      const listResult = await attackerCaller.workflow.artifacts.list({
+        runId: runResult.data.id,
+      });
+
+      expect(listResult.success).toBe(false);
+      expect(listResult.error).toBe("Workflow run not found");
+    });
+
+    it("should prevent creating an artifact on another user's run", async () => {
+      const ownerCaller = appRouter.createCaller(createAuthContext(1));
+      const attackerCaller = appRouter.createCaller(createAuthContext(2));
+
+      const runResult = await ownerCaller.workflow.runs.create({
+        initialTask: "Owner task",
+      });
+
+      if (!runResult.data) {
+        throw new Error("Failed to create run");
+      }
+
+      const createResult = await attackerCaller.workflow.artifacts.create({
+        runId: runResult.data.id,
+        artifactType: "report",
+        content: "tampered artifact",
+      });
+
+      expect(createResult.success).toBe(false);
+      expect(createResult.error).toBe("Workflow run not found");
     });
   });
 

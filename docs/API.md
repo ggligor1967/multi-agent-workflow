@@ -1,258 +1,348 @@
 # API Documentation
 
-This document describes the tRPC API endpoints available in the Multi-Agent AI Workflow Orchestrator.
+This document describes the currently implemented application-facing API for the Multi-Agent AI Workflow Orchestrator.
 
 ## Overview
 
-The API is built using [tRPC](https://trpc.io/) for end-to-end type safety. All endpoints are accessible via the `/trpc` route.
+The backend is built with [tRPC](https://trpc.io/) on top of Express. The client talks to the server through:
 
-### Base URL
+- HTTP tRPC requests at `/api/trpc`
+- WebSocket subscriptions at `/api/trpc`
+- two plain Express auth routes for dev login and OAuth callback
 
-- **Docker**: `http://localhost:3005/trpc`
-- **Local Dev**: `http://localhost:3000/trpc`
+### Default local URLs
 
-### Authentication
+- Docker web app: `http://localhost:3005`
+- Local development web app: `http://localhost:3000` by default
+- tRPC HTTP endpoint: `http://localhost:<port>/api/trpc`
+- tRPC WebSocket endpoint: `ws://localhost:<port>/api/trpc`
 
-Most endpoints require authentication. The API uses session-based authentication with JWT cookies.
+## Authentication model
 
-| Procedure Type | Description |
-|---------------|-------------|
-| `publicProcedure` | No authentication required |
-| `protectedProcedure` | Requires authenticated user |
-| `adminProcedure` | Requires admin role |
+The app uses a session cookie. The router has three procedure types:
 
----
+| Procedure type | Meaning |
+| --- | --- |
+| `publicProcedure` | No authenticated user is required. |
+| `protectedProcedure` | Requires an authenticated user. |
+| `adminProcedure` | Requires an authenticated user with the `admin` role. |
 
-## Workflows Router
+### HTTP auth routes
 
-### `getModels`
+These are plain Express routes, not tRPC procedures.
 
-Returns a list of available AI models from the configured LLM provider.
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/dev-login` | Development-only login when `OAUTH_SERVER_URL` is not configured. |
+| `GET` | `/api/oauth/callback` | OAuth callback that exchanges the authorization code and sets the session cookie. |
 
-```typescript
-// Query
-trpc.getModels.useQuery()
+The tRPC `auth` router also exposes:
 
-// Response
-string[]
-// Example: ["llama3.2:latest", "mistral:latest", "deepseek-r1:7b"]
-```
+| Procedure | Auth | Purpose |
+| --- | --- | --- |
+| `auth.me` | Public | Returns the current user or `null`. |
+| `auth.logout` | Public | Clears the session cookie. |
 
-**Authentication**: Public
+## Response envelope
 
----
+Most workflow procedures return the same envelope shape:
 
-### `createConfig`
-
-Creates a new workflow configuration.
-
-```typescript
-// Mutation Input
-{
-  name: string;           // Configuration name
-  initialTask: string;    // Task description
-  llmModel: string;       // Primary LLM model
-  mistralModel?: string;  // Alternative model (optional)
-}
-
-// Response
-{
+```ts
+type ApiResult<T> = {
   success: boolean;
-  config?: WorkflowConfig;
+  data?: T;
   error?: string;
+};
+```
+
+If a procedure throws a `TRPCError`, tRPC will return a standard error response instead of this envelope.
+
+## Router map
+
+The top-level routers are:
+
+- `system`
+- `auth`
+- `workflow`
+
+### `system`
+
+| Procedure | Auth | Input | Output |
+| --- | --- | --- | --- |
+| `system.health` | Public | `{ timestamp: number }` | `{ ok: true }` |
+| `system.notifyOwner` | Admin | `{ title: string; content: string }` | `{ success: boolean }` |
+
+## `workflow` router
+
+### `workflow.getAvailableModels`
+
+Returns the list of models discovered from the configured provider.
+
+- **Auth:** Protected
+- **Input:** none
+- **Output:** `ApiResult<string[]>`
+
+```ts
+const models = trpc.workflow.getAvailableModels.useQuery();
+```
+
+### `workflow.configs`
+
+#### `workflow.configs.list`
+
+- **Auth:** Protected
+- **Input:** none
+- **Output:** `ApiResult<WorkflowConfig[]>`
+
+#### `workflow.configs.get`
+
+- **Auth:** Protected
+- **Input:** `{ id: number }`
+- **Output:** `ApiResult<WorkflowConfig>`
+
+#### `workflow.configs.create`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
+{
+  name: string;
+  description?: string;
+  initialTask: string;        // 1..20_000 chars after trim
+  llmModel?: string;          // defaults to "llama3.2"
+  mistralModel?: string;      // defaults to "mistral"
 }
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<WorkflowConfig[]>`
 
----
+#### `workflow.configs.update`
 
-### `getConfigs`
+- **Auth:** Protected
+- **Input:**
 
-Retrieves all workflow configurations for the current user.
-
-```typescript
-// Query
-trpc.getConfigs.useQuery()
-
-// Response
-WorkflowConfig[]
-```
-
-**Authentication**: Protected
-
----
-
-### `updateConfig`
-
-Updates an existing workflow configuration.
-
-```typescript
-// Mutation Input
+```ts
 {
   id: number;
   name?: string;
+  description?: string;
   initialTask?: string;
   llmModel?: string;
   mistralModel?: string;
 }
+```
 
-// Response
+- **Output:** `ApiResult<unknown>`
+
+#### `workflow.configs.delete`
+
+- **Auth:** Protected
+- **Input:** `{ id: number }`
+- **Output:** `ApiResult<unknown>`
+
+### `workflow.runs`
+
+#### `workflow.runs.list`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
 {
-  success: boolean;
-  config?: WorkflowConfig;
-  error?: string;
+  limit?: number;   // default 50
+  offset?: number;  // default 0
 }
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<WorkflowRun[]>`
 
----
+#### `workflow.runs.get`
 
-### `deleteConfig`
+Returns the full run snapshot used by the monitor page.
 
-Deletes a workflow configuration.
+- **Auth:** Protected
+- **Input:** `{ id: number }`
+- **Output:**
 
-```typescript
-// Mutation Input
-{
-  id: number;
-}
-
-// Response
-{
-  success: boolean;
-  error?: string;
-}
-```
-
-**Authentication**: Protected
-
----
-
-### `startRun`
-
-Starts a new workflow execution.
-
-```typescript
-// Mutation Input
-{
-  configId?: number;      // Use existing config
-  // OR create ad-hoc run:
-  name?: string;
-  initialTask: string;
-  llmModel: string;
-  mistralModel?: string;
-}
-
-// Response
-{
-  success: boolean;
-  run?: WorkflowRun;
-  error?: string;
-}
-```
-
-**Authentication**: Protected
-
----
-
-### `getRuns`
-
-Retrieves all workflow runs for the current user.
-
-```typescript
-// Query
-trpc.getRuns.useQuery()
-
-// Response
-WorkflowRun[]
-```
-
-**Authentication**: Protected
-
----
-
-### `getRun`
-
-Retrieves a specific workflow run with its steps and artifacts.
-
-```typescript
-// Query Input
-{
-  id: number;
-}
-
-// Response
-{
+```ts
+ApiResult<{
   run: WorkflowRun;
   steps: WorkflowStep[];
   artifacts: Artifact[];
-} | null
+  events: WorkflowRunEventView[];
+  metrics: WorkflowRunMetrics;
+}>
 ```
 
-**Authentication**: Protected
+`events` contains parsed lifecycle event metadata. `metrics` contains derived timing and count information, such as queue latency and artifact timing.
 
----
+#### `workflow.runs.create`
 
-### `getSteps`
+Queues a workflow run. It does **not** execute inline in the web request.
 
-Retrieves steps for a specific workflow run.
+- **Auth:** Protected
+- **Input:**
 
-```typescript
-// Query Input
+```ts
+{
+  configId?: number;
+  initialTask: string;  // 1..20_000 chars after trim
+  modelId?: string;     // optional override, max 100 chars
+}
+```
+
+- **Output:** `ApiResult<WorkflowRun>`
+
+##### Guard rails on run creation
+
+Before creating a run, the server enforces:
+
+1. config ownership validation when `configId` is provided
+2. selected-model validation against `fetchAvailableModels()`
+3. active-run quota per user
+4. sliding-window burst limit per user
+
+Default limits are controlled through environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `WORKFLOW_RUN_CREATE_WINDOW_MS` | `900000` | Sliding window for burst limiting. |
+| `WORKFLOW_RUN_CREATE_MAX_PER_WINDOW` | `30` | Maximum runs allowed inside that window. |
+| `WORKFLOW_RUN_ACTIVE_LIMIT` | `25` | Maximum combined `pending` + `running` runs per user. |
+
+If a guard rail blocks run creation, the procedure returns `success: false` with a descriptive `error` string.
+
+#### `workflow.runs.updateStatus`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
+{
+  id: number;
+  status: "pending" | "running" | "completed" | "failed";
+  errorMessage?: string;
+}
+```
+
+- **Output:** `ApiResult<unknown>`
+
+### `workflow.steps`
+
+#### `workflow.steps.list`
+
+- **Auth:** Protected
+- **Input:** `{ runId: number }`
+- **Output:** `ApiResult<WorkflowStep[]>`
+
+#### `workflow.steps.create`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
 {
   runId: number;
+  stepName: "setup" | "initialization" | "orchestration" | "synchronization";
 }
-
-// Response
-WorkflowStep[]
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<WorkflowStep>`
 
----
+#### `workflow.steps.updateStatus`
 
-### `getArtifacts`
+- **Auth:** Protected
+- **Input:**
 
-Retrieves artifacts for a specific workflow run.
+```ts
+{
+  id: number;
+  status: "pending" | "running" | "completed" | "failed";
+  output?: string;
+  errorMessage?: string;
+}
+```
 
-```typescript
-// Query Input
+- **Output:** `ApiResult<WorkflowStep>`
+
+### `workflow.artifacts`
+
+All artifact operations enforce run ownership.
+
+#### `workflow.artifacts.list`
+
+- **Auth:** Protected
+- **Input:** `{ runId: number }`
+- **Output:** `ApiResult<Artifact[]>`
+
+#### `workflow.artifacts.getByType`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
 {
   runId: number;
+  artifactType: string;
 }
-
-// Response
-Artifact[]
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<Artifact[]>`
 
----
+#### `workflow.artifacts.create`
 
-### `getAgentConfigs`
+- **Auth:** Protected
+- **Input:**
 
-Retrieves all agent configurations.
-
-```typescript
-// Query
-trpc.getAgentConfigs.useQuery()
-
-// Response
-AgentConfig[]
+```ts
+{
+  runId: number;
+  artifactType: "nanoscript" | "context_data" | "analysis" | "final_code" | "report";
+  content: string;
+  mimeType?: string; // defaults to "text/plain"
+}
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<Artifact>`
 
----
+### `workflow.agents`
 
-### `updateAgentConfig`
+#### `workflow.agents.list`
 
-Updates an agent's configuration.
+- **Auth:** Protected
+- **Input:** none
+- **Output:** `ApiResult<AgentConfig[]>`
 
-```typescript
-// Mutation Input
+#### `workflow.agents.get`
+
+- **Auth:** Protected
+- **Input:** `{ id: number }`
+- **Output:** `ApiResult<AgentConfig>`
+
+#### `workflow.agents.create`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
+{
+  agentType: "nanoscript_generator" | "context_provider" | "critical_analyst";
+  role: string;
+  goal: string;
+  backstory: string;
+  llmModel: string;
+}
+```
+
+- **Output:** `ApiResult<AgentConfig[]>`
+
+#### `workflow.agents.update`
+
+- **Auth:** Protected
+- **Input:**
+
+```ts
 {
   id: number;
   role?: string;
@@ -260,252 +350,189 @@ Updates an agent's configuration.
   backstory?: string;
   llmModel?: string;
 }
-
-// Response
-{
-  success: boolean;
-  config?: AgentConfig;
-  error?: string;
-}
 ```
 
-**Authentication**: Protected
+- **Output:** `ApiResult<unknown>`
 
----
+## Data types
 
-## Data Types
+These shapes reflect the current Drizzle schema.
 
-### WorkflowConfig
+### `WorkflowConfig`
 
-```typescript
-interface WorkflowConfig {
+```ts
+type WorkflowConfig = {
   id: number;
   userId: number;
   name: string;
+  description: string | null;
   initialTask: string;
   llmModel: string;
-  mistralModel: string | null;
+  mistralModel: string;
+  isActive: number;
   createdAt: Date;
   updatedAt: Date;
-}
+};
 ```
 
-### WorkflowRun
+### `WorkflowRun`
 
-```typescript
-interface WorkflowRun {
+```ts
+type WorkflowRun = {
   id: number;
-  configId: number | null;
   userId: number;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  configId: number | null;
+  status: "pending" | "running" | "completed" | "failed";
+  initialTask: string;
+  selectedModel: string | null;
   startedAt: Date | null;
   completedAt: Date | null;
   errorMessage: string | null;
   createdAt: Date;
-}
+  updatedAt: Date;
+};
 ```
 
-### WorkflowStep
+### `WorkflowStep`
 
-```typescript
-interface WorkflowStep {
+```ts
+type WorkflowStep = {
   id: number;
   runId: number;
   stepName: string;
-  agentType: 'context_provider' | 'nanoscript_generator' | 'critical_analyst';
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  input: string | null;
-  output: string | null;
+  status: "pending" | "running" | "completed" | "failed";
   startedAt: Date | null;
   completedAt: Date | null;
+  output: string | null;
+  errorMessage: string | null;
   createdAt: Date;
-}
+};
 ```
 
-### Artifact
+### `WorkflowRunEvent`
 
-```typescript
-interface Artifact {
+```ts
+type WorkflowRunEvent = {
   id: number;
   runId: number;
-  stepId: number | null;
-  type: 'nanoscript' | 'context' | 'analysis' | 'final_output';
-  content: string;
-  metadata: Record<string, unknown> | null;
+  level: "info" | "warn" | "error";
+  source: string;
+  eventType: string;
+  message: string;
+  metadata: string | null;
   createdAt: Date;
-}
+};
 ```
 
-### AgentConfig
+### `Artifact`
 
-```typescript
-interface AgentConfig {
+```ts
+type Artifact = {
   id: number;
-  agentType: 'context_provider' | 'nanoscript_generator' | 'critical_analyst';
+  runId: number;
+  artifactType: string;
+  content: string;
+  mimeType: string;
+  createdAt: Date;
+};
+```
+
+### `AgentConfig`
+
+```ts
+type AgentConfig = {
+  id: number;
+  userId: number;
+  agentType: string;
   role: string;
   goal: string;
   backstory: string;
-  llmModel: string | null;
+  llmModel: string;
+  isActive: number;
   createdAt: Date;
   updatedAt: Date;
-}
+};
 ```
 
----
+## Real-time subscriptions
 
-## WebSocket Subscriptions
+The workflow monitor subscribes to `workflow.runs.onUpdate`.
 
-The API supports real-time updates via WebSocket subscriptions.
+### `workflow.runs.onUpdate`
 
-### Connection
+- **Auth:** Protected
+- **Input:** `{ runId: number }`
+- **Transport:** WebSocket on `/api/trpc`
 
-Connect to WebSocket at: `ws://localhost:3005/api/trpc` (Docker) or `ws://localhost:3000/api/trpc` (local)
+The server emits the following event types:
 
-### Available Subscriptions
+```ts
+type WorkflowEventType =
+  | "step_update"
+  | "artifact_created"
+  | "lifecycle_event"
+  | "run_status_changed"
+  | "run_completed"
+  | "run_failed";
+```
 
-#### `onRunUpdate`
+Payload shape:
 
-Subscribe to updates for a specific workflow run.
-
-```typescript
-// Subscription Input
-{
+```ts
+type WorkflowEvent = {
+  type: WorkflowEventType;
   runId: number;
-}
-
-// Emitted Events
-{
-  type: 'step_update' | 'run_complete' | 'run_failed';
-  step?: WorkflowStep;
-  run?: WorkflowRun;
-  error?: string;
-}
+  data: {
+    stepName?: string;
+    stepStatus?: string;
+    artifactType?: string;
+    artifactId?: number;
+    status?: string;
+    errorMessage?: string;
+    lifecycleEventType?: string;
+    lifecycleEventLevel?: string;
+    message?: string;
+    timestamp: string;
+  };
+};
 ```
 
----
+The subscription uses both in-process events and periodic snapshot polling to keep cross-process worker updates visible to the client.
 
-## Error Handling
+## Error handling notes
 
-All mutations return a consistent response format:
+- Procedures in the workflow router usually return `success: false` with a human-readable `error` field for recoverable failures.
+- Authorization failures in the subscription path throw `TRPCError` with `FORBIDDEN`.
+- `auth.logout` and `system.health` return plain success payloads instead of the `ApiResult<T>` envelope.
 
-```typescript
-interface MutationResponse<T> {
-  success: boolean;
-  data?: T;        // Present on success
-  error?: string;  // Present on failure
-}
-```
+## Client example
 
-### Common Error Codes
-
-| Error | Description |
-|-------|-------------|
-| `UNAUTHORIZED` | Authentication required |
-| `FORBIDDEN` | Insufficient permissions |
-| `NOT_FOUND` | Resource not found |
-| `BAD_REQUEST` | Invalid input data |
-| `INTERNAL_SERVER_ERROR` | Server-side error |
-
----
-
-## Rate Limiting
-
-Currently, no rate limiting is implemented. For production deployments, consider adding rate limiting middleware.
-
----
-
-## Examples
-
-### JavaScript/TypeScript Client
-
-```typescript
-import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
-import type { AppRouter } from './server/routers';
-
-const client = createTRPCProxyClient<AppRouter>({
-  links: [
-    httpBatchLink({
-      url: 'http://localhost:3005/trpc',
-      headers: () => ({
-        // Include auth cookie if needed
-      }),
-    }),
-  ],
-});
-
-// Get available models
-const models = await client.getModels.query();
-
-// Create and start a workflow
-const result = await client.startRun.mutate({
-  name: 'My Workflow',
-  initialTask: 'Create a TypeScript utility function',
-  llmModel: 'llama3.2:latest',
-});
-
-if (result.success) {
-  console.log('Workflow started:', result.run.id);
-}
-```
-
-### React Query Integration
-
-```typescript
-import { trpc } from '@/lib/trpc';
+```ts
+import { trpc } from "@/lib/trpc";
 
 function WorkflowLauncher() {
-  const models = trpc.getModels.useQuery();
-  const startRun = trpc.startRun.useMutation();
+  const models = trpc.workflow.getAvailableModels.useQuery();
+  const createRun = trpc.workflow.runs.create.useMutation();
 
-  const handleLaunch = async () => {
-    const result = await startRun.mutateAsync({
-      name: 'My Workflow',
-      initialTask: 'Build a REST API',
-      llmModel: models.data?.[0] ?? 'llama3.2:latest',
+  async function launch() {
+    const result = await createRun.mutateAsync({
+      initialTask: "Generate a TypeScript utility function",
+      modelId: models.data?.data?.[0],
     });
-    
-    if (result.success) {
-      // Navigate to monitor page
-    }
-  };
 
-  return (
-    <button onClick={handleLaunch}>
-      Launch Workflow
-    </button>
-  );
+    if (!result.success || !result.data) {
+      throw new Error(result.error ?? "Failed to queue workflow run");
+    }
+
+    return result.data.id;
+  }
+
+  return <button onClick={() => void launch()}>Launch</button>;
 }
 ```
 
-### cURL Examples
+## References
 
-```bash
-# Get available models (no auth required)
-curl http://localhost:3005/trpc/getModels
-
-# Start a workflow run (requires auth cookie)
-curl -X POST http://localhost:3005/trpc/startRun \
-  -H "Content-Type: application/json" \
-  -H "Cookie: session=your-session-cookie" \
-  -d '{
-    "json": {
-      "name": "Test Workflow",
-      "initialTask": "Create a hello world function",
-      "llmModel": "llama3.2:latest"
-    }
-  }'
-```
-
----
-
-## OpenAPI Compatibility
-
-While tRPC doesn't natively generate OpenAPI specs, you can use [trpc-openapi](https://github.com/jlalmes/trpc-openapi) to expose REST endpoints if needed.
-
----
-
-## Further Reading
-
-- [tRPC Documentation](https://trpc.io/docs)
-- [React Query Integration](https://trpc.io/docs/client/react)
-- [WebSocket Subscriptions](https://trpc.io/docs/subscriptions)
+- [tRPC documentation](https://trpc.io/docs)
+- [React Query integration](https://trpc.io/docs/client/react)
+- [WebSocket subscriptions](https://trpc.io/docs/subscriptions)

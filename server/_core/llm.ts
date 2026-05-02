@@ -276,7 +276,47 @@ const normalizeResponseFormat = ({
   };
 };
 
+// =============================================================================
+// CACHING - Models cache to avoid repeated API calls
+// =============================================================================
+interface ModelsCache {
+  models: string[];
+  timestamp: number;
+  ttl: number; // Time-to-live in milliseconds
+}
+
+let modelsCache: ModelsCache | null = null;
+const MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedModels(): string[] | null {
+  if (!modelsCache) return null;
+  if (Date.now() - modelsCache.timestamp > modelsCache.ttl) {
+    modelsCache = null;
+    return null;
+  }
+  return modelsCache.models;
+}
+
+function setCachedModels(models: string[]): void {
+  modelsCache = {
+    models,
+    timestamp: Date.now(),
+    ttl: MODELS_CACHE_TTL,
+  };
+}
+
+/** Clear the models cache (useful for testing or manual refresh) */
+export function clearModelsCache(): void {
+  modelsCache = null;
+}
+
 export async function fetchAvailableModels(): Promise<string[]> {
+  // Check cache first
+  const cached = getCachedModels();
+  if (cached) {
+    return cached;
+  }
+
   const baseUrl = resolveBaseApiUrl();
   
   // Try multiple endpoints for different providers
@@ -305,7 +345,10 @@ export async function fetchAvailableModels(): Promise<string[]> {
         const models = (data.models as Array<{ name?: string; model?: string; id?: string }>)
           .map((m) => m.name || m.model || m.id)
           .filter((m): m is string => Boolean(m && m.trim().length > 0));
-        if (models.length > 0) return models;
+        if (models.length > 0) {
+          setCachedModels(models);
+          return models;
+        }
       }
       
       // Handle OpenAI format: { data: [{ id: "model-name" }] }
@@ -313,7 +356,10 @@ export async function fetchAvailableModels(): Promise<string[]> {
         const models = (data.data as Array<{ id?: string; name?: string }>)
           .map((m) => m.id || m.name)
           .filter((m): m is string => Boolean(m && m.trim().length > 0));
-        if (models.length > 0) return models;
+        if (models.length > 0) {
+          setCachedModels(models);
+          return models;
+        }
       }
     } catch (error) {
       // Try next endpoint
@@ -323,7 +369,9 @@ export async function fetchAvailableModels(): Promise<string[]> {
 
   console.error("[LLM] fetchAvailableModels: all endpoints failed, using fallback");
   // Safe fallback so UI still works
-  return ["deepseek-v3.1:671b-cloud"];
+  const fallback = ["deepseek-v3.1:671b-cloud"];
+  setCachedModels(fallback); // Cache fallback to avoid repeated failures
+  return fallback;
 }
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
