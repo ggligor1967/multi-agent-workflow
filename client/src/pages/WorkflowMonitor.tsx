@@ -114,6 +114,12 @@ interface WorkflowMonitorProps {
   params: { id: string };
 }
 
+export function buildRetryLauncherPath(configId: unknown): string {
+  return typeof configId === "number" && Number.isInteger(configId) && configId > 0
+    ? `/launcher?configId=${configId}`
+    : "/launcher";
+}
+
 export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
@@ -685,7 +691,7 @@ export default function WorkflowMonitor({ params }: WorkflowMonitorProps) {
           )}
           {run?.status === "failed" && (
             <Button
-              onClick={() => navigate("/launcher")}
+              onClick={() => navigate(buildRetryLauncherPath(run?.configId))}
               variant="outline"
               className="border-blue-600 text-blue-600 hover:bg-blue-50"
             >
