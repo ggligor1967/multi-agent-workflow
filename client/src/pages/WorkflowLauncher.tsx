@@ -6,7 +6,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-react";
+import {
+  Loader2,
+  Play,
+  ArrowLeft,
+  ArrowRight,
+  Sparkles,
+  Brain,
+  CheckCircle2,
+  Code,
+  History,
+  Search,
+} from "lucide-react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 
@@ -26,6 +37,10 @@ type RunCreateInput = {
   configId?: number;
   initialTask: string;
   modelId?: string;
+};
+
+type LaunchSuccessState = {
+  runId: number | null;
 };
 
 export function parsePositiveConfigId(search: string): number | null {
@@ -99,6 +114,7 @@ export default function WorkflowLauncher() {
   const [selectedConfig, setSelectedConfig] = useState<string>("");
   const [initialTask, setInitialTask] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [launchSuccess, setLaunchSuccess] = useState<LaunchSuccessState | null>(null);
 
   const urlConfigId = useMemo(() => {
     return parsePositiveConfigId(search);
@@ -159,9 +175,11 @@ export default function WorkflowLauncher() {
   // Create run mutation
   const createRunMutation = trpc.workflow.runs.create.useMutation({
     onSuccess: (result) => {
-      if (result.success && result.data?.id) {
-        toast.success("Workflow launched! Redirecting to monitor...");
-        navigate(`/runs/${result.data.id}`);
+      if (result.success) {
+        setLaunchSuccess({
+          runId: typeof result.data?.id === "number" ? result.data.id : null,
+        });
+        toast.success("Workflow created successfully.");
       } else {
         toast.error(result.error || "Failed to launch workflow");
       }
@@ -190,6 +208,10 @@ export default function WorkflowLauncher() {
       buildRunCreateInput(selectedConfig, initialTask, selectedModel, availableModels)
     );
   };
+
+  const primarySuccessPath = launchSuccess?.runId
+    ? `/runs/${launchSuccess.runId}`
+    : "/history";
 
   const handleConfigChange = (configId: string) => {
     setSelectedConfig(configId);
@@ -235,7 +257,46 @@ export default function WorkflowLauncher() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleLaunch} className="space-y-6">
+            {launchSuccess ? (
+              <div role="status" aria-live="polite" className="space-y-6">
+                <div className="rounded-lg border border-green-200 bg-green-50 p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-full bg-green-100 p-2">
+                      <CheckCircle2 className="h-5 w-5 text-green-700" />
+                    </div>
+                    <div className="space-y-2">
+                      <h2 className="text-lg font-semibold text-green-950">
+                        Workflow created successfully
+                      </h2>
+                      <p className="text-sm text-green-900">
+                        {launchSuccess.runId
+                          ? `Run ID: ${launchSuccess.runId}. Open the run monitor to follow execution live, or use history to revisit it later.`
+                          : "The run was created successfully. Open execution history to continue from the newly created run."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4">
+                  <Button onClick={() => navigate(primarySuccessPath)} className="gap-2">
+                    <ArrowRight className="h-4 w-4" />
+                    {launchSuccess.runId ? "Open Run Monitor" : "View Execution History"}
+                  </Button>
+                  {launchSuccess.runId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate("/history")}
+                      className="gap-2"
+                    >
+                      <History className="h-4 w-4" />
+                      View History
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleLaunch} className="space-y-6">
               {/* Configuration Selection */}
               <div className="space-y-2">
                 <Label htmlFor="config">Use Saved Configuration (Optional)</Label>
@@ -361,7 +422,8 @@ export default function WorkflowLauncher() {
                   Cancel
                 </Button>
               </div>
-            </form>
+              </form>
+            )}
           </CardContent>
         </Card>
       </div>
