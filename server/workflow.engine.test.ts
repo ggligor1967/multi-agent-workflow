@@ -22,39 +22,46 @@ const mockDb = {
   artifacts: [] as Array<Record<string, unknown>>,
 };
 
+function createAgentMockInstance(result: Record<string, unknown>) {
+  return {
+    execute: vi.fn().mockResolvedValue(result),
+  };
+}
+
+function createConstructibleAgentMock(result: Record<string, unknown>) {
+  return function MockAgent() {
+    return createAgentMockInstance(result);
+  };
+}
+
 // ─── Mock: WebSocket events ──────────────────────────────────────────────────
 vi.mock("./_core/ws", () => ({
   workflowEvents: {
     emitStepUpdate: vi.fn(),
     emitRunStatusChanged: vi.fn(),
     emitArtifactCreated: vi.fn(),
+    emitLifecycleEvent: vi.fn(),
   },
 }));
 
 // ─── Mock: Agent classes ─────────────────────────────────────────────────────
 vi.mock("./agents", () => ({
-  ContextProviderAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+  ContextProviderAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "## Domain Context\nRelevant domain knowledge gathered.",
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-    }),
-  })),
-  NanoscriptGeneratorAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+    })),
+  NanoscriptGeneratorAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "function hello() { return 'Hello World'; }",
       usage: { prompt_tokens: 150, completion_tokens: 100, total_tokens: 250 },
-    }),
-  })),
-  CriticalAnalystAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+    })),
+  CriticalAnalystAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "## Analysis\nCode review complete. No issues found.",
       finalCode: "function hello() { return 'Hello World'; }",
       usage: { prompt_tokens: 200, completion_tokens: 80, total_tokens: 280 },
-    }),
-  })),
+    })),
   AGENT_TYPES: {
     CONTEXT_PROVIDER: "context_provider",
     NANOSCRIPT_GENERATOR: "nanoscript_generator",
@@ -83,15 +90,15 @@ vi.mock("./db.utils", () => ({
       return [record];
     }
   ),
-  createWorkflowStep: vi.fn(async (step: Record<string, unknown>) => {
+  createWorkflowStep: vi.fn(async (step: Record<string, unknown>, _userId: number) => {
     const record = { id: mockDb.counter++, ...step, createdAt: new Date() };
     mockDb.steps.push(record as (typeof mockDb.steps)[number]);
-    return [record];
+    return record;
   }),
   getWorkflowSteps: vi.fn(async (runId: number) => {
     return mockDb.steps.filter((s) => s.runId === runId);
   }),
-  updateWorkflowStep: vi.fn(async (id: number, updates: Record<string, unknown>) => {
+  updateWorkflowStep: vi.fn(async (id: number, _userId: number, updates: Record<string, unknown>) => {
     const idx = mockDb.steps.findIndex((s) => s.id === id);
     if (idx === -1) throw new Error(`Step not found: ${id}`);
     mockDb.steps[idx] = { ...mockDb.steps[idx], ...updates } as (typeof mockDb.steps)[number];
@@ -105,10 +112,13 @@ vi.mock("./db.utils", () => ({
     mockDb.workflowRuns.set(key, updated);
     return updated;
   }),
-  createArtifact: vi.fn(async (artifact: Record<string, unknown>) => {
+  createArtifact: vi.fn(async (artifact: Record<string, unknown>, _userId: number) => {
     const record = { id: mockDb.counter++, ...artifact, createdAt: new Date() };
     mockDb.artifacts.push(record);
-    return { insertId: record.id };
+    return record;
+  }),
+  createWorkflowRunEvent: vi.fn(async (runId: number, userId: number, event: Record<string, unknown>) => {
+    return { id: mockDb.counter++, runId, userId, ...event, createdAt: new Date() };
   }),
 }));
 
@@ -270,13 +280,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Context Provider agent fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "LLM timeout",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -287,13 +295,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Nanoscript Generator agent fails", async () => {
       const { NanoscriptGeneratorAgent } = await import("./agents");
-      vi.mocked(NanoscriptGeneratorAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(NanoscriptGeneratorAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Model unavailable",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -304,13 +310,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Critical Analyst agent fails", async () => {
       const { CriticalAnalystAgent } = await import("./agents");
-      vi.mocked(CriticalAnalystAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(CriticalAnalystAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Analysis error",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -321,13 +325,11 @@ describe("WorkflowEngine", () => {
 
     it("marks the run as 'failed' in the DB when an agent fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Agent failure",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       await engine.execute();
@@ -344,13 +346,11 @@ describe("WorkflowEngine", () => {
 
     it("saves an 'error' artifact to the DB when execution fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Injected test failure",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       await engine.execute();

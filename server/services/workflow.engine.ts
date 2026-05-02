@@ -170,6 +170,10 @@ export class WorkflowEngine {
   private async ensureRunIsStartable(): Promise<void> {
     const run = await dbUtils.getWorkflowRun(this.runId, this.userId);
 
+    if (!run) {
+      throw new Error(`Workflow run not found: ${this.runId}`);
+    }
+
     if (run.status === "running") {
       throw new Error(`Workflow run ${this.runId} is already running`);
     }
