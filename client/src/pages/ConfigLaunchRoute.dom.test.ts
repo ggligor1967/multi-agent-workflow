@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createElement } from "react";
+import { Fragment, createElement, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -75,11 +75,16 @@ vi.mock("wouter", async () => {
     children: React.ReactNode;
     initialPath?: string;
   }) {
-    const memRef = React.useRef<ReturnType<typeof memoryLocation> | null>(null);
-    if (!memRef.current) {
-      memRef.current = memoryLocation({ path: initialPath });
-    }
-    return React.createElement(actual.Router, { hook: memRef.current.hook }, children);
+    const memory = React.useMemo(
+      () => memoryLocation({ path: initialPath }),
+      [initialPath]
+    );
+
+    return React.createElement(actual.Router, {
+      hook: memory.hook,
+      searchHook: memory.searchHook,
+      children,
+    });
   }
 
   return { ...actual, Router };
@@ -89,7 +94,12 @@ vi.mock("wouter", async () => {
 vi.mock("@/components/ui/select", () => import("./__test-helpers__/select-mock"));
 
 import { Router, useLocation, useSearch } from "wouter";
-import { AppRoutes } from "@/App";
+import { AppRoutes } from "../App";
+
+const TestRouter = Router as unknown as ComponentType<{
+  initialPath: string;
+  children: ReactNode;
+}>;
 
 type SavedConfig = {
   id: number;
@@ -164,10 +174,16 @@ function renderConfigLaunchFlow() {
 
   return render(
     createElement(
-      Router,
-      { initialPath: "/configs" },
-      createElement(AppRoutes),
-      createElement(LocationProbe)
+      TestRouter,
+      {
+        initialPath: "/configs",
+        children: createElement(
+          Fragment,
+          null,
+          createElement(AppRoutes),
+          createElement(LocationProbe)
+        ),
+      }
     )
   );
 }
