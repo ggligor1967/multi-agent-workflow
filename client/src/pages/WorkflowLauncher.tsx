@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -7,23 +7,48 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
+
+function parsePositiveConfigId(search: string): number | null {
+  const rawConfigId = new URLSearchParams(search).get("configId");
+  if (!rawConfigId) return null;
+
+  const configId = Number(rawConfigId);
+  return Number.isInteger(configId) && configId > 0 ? configId : null;
+}
+
+function resolveAvailableModel(
+  savedModel: string | null | undefined,
+  availableModels: string[]
+): string {
+  if (savedModel && availableModels.includes(savedModel)) {
+    return savedModel;
+  }
+
+  return availableModels[0] ?? "";
+}
 
 export default function WorkflowLauncher() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const search = useSearch();
+  const lastPrefilledConfigId = useRef<number | null>(null);
 
   const [selectedConfig, setSelectedConfig] = useState<string>("");
   const [initialTask, setInitialTask] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+
+  const urlConfigId = useMemo(() => {
+    return parsePositiveConfigId(search);
+  }, [search]);
 
   // Fetch saved configurations
   const { data: configsResult, isLoading: configsLoading } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
   );
-  const configs = configsResult?.data || [];
+  const configs = configsResult?.data ?? [];
 
   // Fetch available models
   const { data: modelsResult, isLoading: modelsLoading } = trpc.workflow.getAvailableModels.useQuery(
@@ -33,10 +58,39 @@ export default function WorkflowLauncher() {
   const availableModels = modelsResult?.data ?? ["llama3.2:latest"];
 
   useEffect(() => {
-    if (availableModels.length > 0 && !selectedModel) {
+    if (
+      !modelsLoading &&
+      availableModels.length > 0 &&
+      (!selectedModel || !availableModels.includes(selectedModel))
+    ) {
       setSelectedModel(availableModels[0]);
     }
-  }, [availableModels, selectedModel]);
+  }, [availableModels, modelsLoading, selectedModel]);
+
+  useEffect(() => {
+    if (!urlConfigId) {
+      lastPrefilledConfigId.current = null;
+      return;
+    }
+
+    if (modelsLoading) {
+      return;
+    }
+
+    if (lastPrefilledConfigId.current === urlConfigId) {
+      return;
+    }
+
+    const config = configs.find((item) => item.id === urlConfigId);
+    if (!config) {
+      return;
+    }
+
+    setSelectedConfig(config.id.toString());
+    setInitialTask(config.initialTask);
+    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
+    lastPrefilledConfigId.current = urlConfigId;
+  }, [availableModels, configs, modelsLoading, urlConfigId]);
 
   // Create run mutation
   const createRunMutation = trpc.workflow.runs.create.useMutation({
@@ -68,11 +122,33 @@ export default function WorkflowLauncher() {
       return;
     }
 
+    const selectedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
+    const configId =
+      selectedConfigId !== undefined &&
+      Number.isInteger(selectedConfigId) &&
+      selectedConfigId > 0
+        ? selectedConfigId
+        : undefined;
+
     createRunMutation.mutate({
-      configId: selectedConfig ? parseInt(selectedConfig) : undefined,
+      configId,
       initialTask: initialTask.trim(),
-      modelId: selectedModel || undefined,
+      modelId:
+        selectedModel && availableModels.includes(selectedModel)
+          ? selectedModel
+          : undefined,
     });
+  };
+
+  const handleConfigChange = (configId: string) => {
+    setSelectedConfig(configId);
+
+    const parsedConfigId = Number(configId);
+    const config = configs.find((item) => item.id === parsedConfigId);
+    if (!config) return;
+
+    setInitialTask(config.initialTask);
+    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
   };
 
   if (!isAuthenticated) {
@@ -111,7 +187,7 @@ export default function WorkflowLauncher() {
               {/* Configuration Selection */}
               <div className="space-y-2">
                 <Label htmlFor="config">Use Saved Configuration (Optional)</Label>
-                <Select value={selectedConfig} onValueChange={setSelectedConfig}>
+                <Select value={selectedConfig} onValueChange={handleConfigChange}>
                   <SelectTrigger id="config" disabled={configsLoading}>
                     <SelectValue placeholder="Select a configuration..." />
                   </SelectTrigger>
