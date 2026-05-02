@@ -1,3 +1,4 @@
+
 # Architectural Structure Web - Project TODO
 
 ## Database & Backend
@@ -41,9 +42,10 @@
 - [x] Write unit tests for database utilities
 - [x] Write unit tests for tRPC routers (workflows.router.test.ts)
 - [x] Test workflow execution with multiple test cases (test-workflow.ts)
-- [x] Write integration tests for workflow execution (server/__tests__/workflow.integration.test.ts)
+- [x] Write integration tests for workflow execution (server/__tests__/workflow.integration.test.ts; server/workflow.engine.test.ts)
 - [x] Test authentication and authorization (server/__tests__/auth.test.ts)
-- [x] Test error handling and edge cases (server/__tests__/errors.test.ts)
+- [x] Test error handling and edge cases (server/__tests__/errors.test.ts; server/workflows.router.test.ts; server/workflow.engine.test.ts)
+- [x] Write agent utility unit tests (server/agents/base.agent.test.ts)
 
 ## Deployment & Documentation
 - [x] Docker support with multi-stage Dockerfile and docker-compose.yml

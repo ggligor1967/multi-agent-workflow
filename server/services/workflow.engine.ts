@@ -54,7 +54,7 @@ export interface WorkflowExecutionResult {
 
 /**
  * WorkflowEngine orchestrates the multi-agent workflow execution.
- * 
+ *
  * Flow:
  * 1. Setup - Initialize run, load agent configs
  * 2. Initialization - Context Provider gathers domain context
@@ -135,7 +135,7 @@ export class WorkflowEngine {
         const result = await this.runCriticalAnalyst();
         this.artifacts.critical_analyst = result.content;
         await this.saveArtifact("analysis", result.content);
-        
+
         // Save final code - use finalCode from analyst if available, otherwise use generated code
         const finalCode = result.finalCode || this.artifacts.nanoscript_generator || "";
         await this.saveArtifact("final_code", finalCode);
@@ -620,25 +620,33 @@ export class WorkflowEngine {
   private async handleExecutionError(error: unknown): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
-    // Mark run as failed
-    await this.updateRunStatus("failed", errorMessage);
+    // Mark run as failed - guard against secondary failures (e.g. run not found)
+    try {
+      await this.updateRunStatus("failed", errorMessage);
+    } catch (statusError) {
+      this.logError("Failed to mark run as failed", statusError);
+    }
 
-    // Save error as artifact for debugging
-    await this.saveArtifact(
-      "error",
-      scrubSensitiveData(
-        JSON.stringify(
-          {
-            message: errorMessage,
-            timestamp: new Date().toISOString(),
-            artifacts: this.artifacts,
-          },
-          null,
-          2
-        )
-      ),
-      "application/json"
-    );
+    // Save error as artifact for debugging - guard against secondary failures
+    try {
+      await this.saveArtifact(
+        "error",
+        scrubSensitiveData(
+          JSON.stringify(
+            {
+              message: errorMessage,
+              stack: error instanceof Error ? error.stack : undefined,
+              timestamp: new Date().toISOString(),
+            },
+            null,
+            2
+          )
+        ),
+        "application/json"
+      );
+    } catch (artifactError) {
+      this.logError("Failed to save error artifact", artifactError);
+    }
   }
 
   /**
