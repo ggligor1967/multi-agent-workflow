@@ -13,7 +13,8 @@ import AgentSettings from "./pages/AgentSettings";
 import ConfigManager from "./pages/ConfigManager";
 import HistoryViewer from "./pages/HistoryViewer";
 
-function Router() {
+/** Route table – exported so integration smoke tests can render the real routing tree. */
+export function AppRoutes() {
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
@@ -47,7 +48,7 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <AppRoutes />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

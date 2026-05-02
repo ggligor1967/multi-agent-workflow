@@ -114,3 +114,4 @@ temp/
 .codex/skills/.system/**
 !.codex/prompts/
 !.codex/prompts/**
+package-lock.json
