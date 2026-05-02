@@ -10,7 +10,25 @@ import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 
-function parsePositiveConfigId(search: string): number | null {
+type LauncherWorkflowConfig = {
+  id: number;
+  initialTask: string;
+  llmModel: string | null | undefined;
+};
+
+type LauncherPrefillState = {
+  selectedConfig: string;
+  initialTask: string;
+  selectedModel: string;
+};
+
+type RunCreateInput = {
+  configId?: number;
+  initialTask: string;
+  modelId?: string;
+};
+
+export function parsePositiveConfigId(search: string): number | null {
   const rawConfigId = new URLSearchParams(search).get("configId");
   if (!rawConfigId) return null;
 
@@ -18,7 +36,7 @@ function parsePositiveConfigId(search: string): number | null {
   return Number.isInteger(configId) && configId > 0 ? configId : null;
 }
 
-function resolveAvailableModel(
+export function resolveAvailableModel(
   savedModel: string | null | undefined,
   availableModels: string[]
 ): string {
@@ -27,6 +45,49 @@ function resolveAvailableModel(
   }
 
   return availableModels[0] ?? "";
+}
+
+export function buildConfigPrefillState(
+  config: LauncherWorkflowConfig,
+  availableModels: string[]
+): LauncherPrefillState {
+  return {
+    selectedConfig: config.id.toString(),
+    initialTask: config.initialTask,
+    selectedModel: resolveAvailableModel(config.llmModel, availableModels),
+  };
+}
+
+export function shouldApplyUrlConfigPrefill(
+  urlConfigId: number | null,
+  lastPrefilledConfigId: number | null,
+  modelsLoading: boolean
+): boolean {
+  return Boolean(urlConfigId) && !modelsLoading && lastPrefilledConfigId !== urlConfigId;
+}
+
+export function buildRunCreateInput(
+  selectedConfig: string,
+  initialTask: string,
+  selectedModel: string,
+  availableModels: string[]
+): RunCreateInput {
+  const selectedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
+  const configId =
+    selectedConfigId !== undefined &&
+    Number.isInteger(selectedConfigId) &&
+    selectedConfigId > 0
+      ? selectedConfigId
+      : undefined;
+
+  return {
+    configId,
+    initialTask: initialTask.trim(),
+    modelId:
+      selectedModel && availableModels.includes(selectedModel)
+        ? selectedModel
+        : undefined,
+  };
 }
 
 export default function WorkflowLauncher() {
@@ -73,11 +134,13 @@ export default function WorkflowLauncher() {
       return;
     }
 
-    if (modelsLoading) {
-      return;
-    }
-
-    if (lastPrefilledConfigId.current === urlConfigId) {
+    if (
+      !shouldApplyUrlConfigPrefill(
+        urlConfigId,
+        lastPrefilledConfigId.current,
+        modelsLoading
+      )
+    ) {
       return;
     }
 
@@ -86,9 +149,10 @@ export default function WorkflowLauncher() {
       return;
     }
 
-    setSelectedConfig(config.id.toString());
-    setInitialTask(config.initialTask);
-    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
+    const prefillState = buildConfigPrefillState(config, availableModels);
+    setSelectedConfig(prefillState.selectedConfig);
+    setInitialTask(prefillState.initialTask);
+    setSelectedModel(prefillState.selectedModel);
     lastPrefilledConfigId.current = urlConfigId;
   }, [availableModels, configs, modelsLoading, urlConfigId]);
 
@@ -122,22 +186,9 @@ export default function WorkflowLauncher() {
       return;
     }
 
-    const selectedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
-    const configId =
-      selectedConfigId !== undefined &&
-      Number.isInteger(selectedConfigId) &&
-      selectedConfigId > 0
-        ? selectedConfigId
-        : undefined;
-
-    createRunMutation.mutate({
-      configId,
-      initialTask: initialTask.trim(),
-      modelId:
-        selectedModel && availableModels.includes(selectedModel)
-          ? selectedModel
-          : undefined,
-    });
+    createRunMutation.mutate(
+      buildRunCreateInput(selectedConfig, initialTask, selectedModel, availableModels)
+    );
   };
 
   const handleConfigChange = (configId: string) => {
@@ -147,8 +198,9 @@ export default function WorkflowLauncher() {
     const config = configs.find((item) => item.id === parsedConfigId);
     if (!config) return;
 
-    setInitialTask(config.initialTask);
-    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
+    const prefillState = buildConfigPrefillState(config, availableModels);
+    setInitialTask(prefillState.initialTask);
+    setSelectedModel(prefillState.selectedModel);
   };
 
   if (!isAuthenticated) {
