@@ -62,35 +62,18 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("wouter", async () => {
-  const React = await import("react");
+  const actual = await vi.importActual<typeof import("wouter")>("wouter");
+  const { memoryLocation } = await import("wouter/memory-location");
 
-  type RouterContextValue = {
-    location: string;
-    navigate: (to: string) => void;
+  const memory = memoryLocation({ path: "/" });
+
+  return {
+    ...actual,
+    Router: ({ children }: { children: React.ReactNode }) =>
+      createElement(actual.Router, { hook: memory.hook }, children),
+    useLocation: memory.hook,
   };
-
-  const RouterContext = React.createContext<RouterContextValue | null>(null);
-
-  function getPathname(location: string) {
-    return location.split("?")[0] || "/";
-  }
-
-  function getSearch(location: string) {
-    const index = location.indexOf("?");
-    return index >= 0 ? location.slice(index) : "";
-  }
-
-  function matchesPath(pathname: string, routePath?: string) {
-    if (!routePath) {
-      return true;
-    }
-
-    const pattern = routePath
-      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-      .replace(/:(\w+)/g, "[^/]+");
-
-    return new RegExp(`^${pattern}$`).test(pathname);
-  }
+});
 
   function useRouterContext() {
     const context = React.useContext(RouterContext);
