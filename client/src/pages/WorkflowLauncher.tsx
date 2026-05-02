@@ -7,15 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
-
-interface WorkflowConfig {
-  id: number;
-  name: string;
-  initialTask: string;
-  llmModel: string;
-}
 
 function parsePositiveConfigId(search: string): number | null {
   const rawConfigId = new URLSearchParams(search).get("configId");
@@ -27,7 +20,8 @@ function parsePositiveConfigId(search: string): number | null {
 
 export default function WorkflowLauncher() {
   const { isAuthenticated } = useAuth();
-  const [location, navigate] = useLocation();
+  const [, navigate] = useLocation();
+  const search = useSearch();
   const lastPrefilledConfigId = useRef<number | null>(null);
 
   const [selectedConfig, setSelectedConfig] = useState<string>("");
@@ -35,23 +29,15 @@ export default function WorkflowLauncher() {
   const [selectedModel, setSelectedModel] = useState<string>("");
 
   const urlConfigId = useMemo(() => {
-    const [, queryString] = location.split("?");
-    const search =
-      queryString !== undefined
-        ? `?${queryString}`
-        : typeof window !== "undefined"
-          ? window.location.search
-          : "";
-
     return parsePositiveConfigId(search);
-  }, [location]);
+  }, [search]);
 
   // Fetch saved configurations
   const { data: configsResult, isLoading: configsLoading } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
   );
-  const configs = (configsResult?.data || []) as WorkflowConfig[];
+  const configs = configsResult?.data ?? [];
 
   // Fetch available models
   const { data: modelsResult, isLoading: modelsLoading } = trpc.workflow.getAvailableModels.useQuery(
@@ -117,12 +103,12 @@ export default function WorkflowLauncher() {
       return;
     }
 
-    const parsedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
+    const selectedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
     const configId =
-      parsedConfigId !== undefined &&
-      Number.isInteger(parsedConfigId) &&
-      parsedConfigId > 0
-        ? parsedConfigId
+      selectedConfigId !== undefined &&
+      Number.isInteger(selectedConfigId) &&
+      selectedConfigId > 0
+        ? selectedConfigId
         : undefined;
 
     createRunMutation.mutate({
@@ -141,7 +127,6 @@ export default function WorkflowLauncher() {
 
     setInitialTask(config.initialTask);
     setSelectedModel(config.llmModel);
-    lastPrefilledConfigId.current = parsedConfigId;
   };
 
   if (!isAuthenticated) {
