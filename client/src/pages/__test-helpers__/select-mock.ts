@@ -1,5 +1,6 @@
 // Shared Select component mock for jsdom tests.
-// Import via vi.mock("@/components/ui/select", () => import("./__test-helpers__/select-mock"))
+// Usage from client/src/pages/*.test.ts:
+//   vi.mock("@/components/ui/select", () => import("./__test-helpers__/select-mock"));
 
 import React from "react";
 
