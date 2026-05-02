@@ -18,6 +18,17 @@ function parsePositiveConfigId(search: string): number | null {
   return Number.isInteger(configId) && configId > 0 ? configId : null;
 }
 
+function resolveAvailableModel(
+  savedModel: string | null | undefined,
+  availableModels: string[]
+): string {
+  if (savedModel && availableModels.includes(savedModel)) {
+    return savedModel;
+  }
+
+  return availableModels[0] ?? "";
+}
+
 export default function WorkflowLauncher() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
@@ -47,14 +58,22 @@ export default function WorkflowLauncher() {
   const availableModels = modelsResult?.data ?? ["llama3.2:latest"];
 
   useEffect(() => {
-    if (availableModels.length > 0 && !selectedModel) {
+    if (
+      !modelsLoading &&
+      availableModels.length > 0 &&
+      (!selectedModel || !availableModels.includes(selectedModel))
+    ) {
       setSelectedModel(availableModels[0]);
     }
-  }, [availableModels, selectedModel]);
+  }, [availableModels, modelsLoading, selectedModel]);
 
   useEffect(() => {
     if (!urlConfigId) {
       lastPrefilledConfigId.current = null;
+      return;
+    }
+
+    if (modelsLoading) {
       return;
     }
 
@@ -69,9 +88,9 @@ export default function WorkflowLauncher() {
 
     setSelectedConfig(config.id.toString());
     setInitialTask(config.initialTask);
-    setSelectedModel(config.llmModel);
+    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
     lastPrefilledConfigId.current = urlConfigId;
-  }, [configs, urlConfigId]);
+  }, [availableModels, configs, modelsLoading, urlConfigId]);
 
   // Create run mutation
   const createRunMutation = trpc.workflow.runs.create.useMutation({
@@ -114,7 +133,10 @@ export default function WorkflowLauncher() {
     createRunMutation.mutate({
       configId,
       initialTask: initialTask.trim(),
-      modelId: selectedModel || undefined,
+      modelId:
+        selectedModel && availableModels.includes(selectedModel)
+          ? selectedModel
+          : undefined,
     });
   };
 
@@ -126,7 +148,7 @@ export default function WorkflowLauncher() {
     if (!config) return;
 
     setInitialTask(config.initialTask);
-    setSelectedModel(config.llmModel);
+    setSelectedModel(resolveAvailableModel(config.llmModel, availableModels));
   };
 
   if (!isAuthenticated) {
