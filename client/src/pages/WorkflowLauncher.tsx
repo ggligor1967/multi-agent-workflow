@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -10,20 +10,48 @@ import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
+interface WorkflowConfig {
+  id: number;
+  name: string;
+  initialTask: string;
+  llmModel: string;
+}
+
+function parsePositiveConfigId(search: string): number | null {
+  const rawConfigId = new URLSearchParams(search).get("configId");
+  if (!rawConfigId) return null;
+
+  const configId = Number(rawConfigId);
+  return Number.isInteger(configId) && configId > 0 ? configId : null;
+}
+
 export default function WorkflowLauncher() {
   const { isAuthenticated } = useAuth();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  const lastPrefilledConfigId = useRef<number | null>(null);
 
   const [selectedConfig, setSelectedConfig] = useState<string>("");
   const [initialTask, setInitialTask] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+
+  const urlConfigId = useMemo(() => {
+    const [, queryString] = location.split("?");
+    const search =
+      queryString !== undefined
+        ? `?${queryString}`
+        : typeof window !== "undefined"
+          ? window.location.search
+          : "";
+
+    return parsePositiveConfigId(search);
+  }, [location]);
 
   // Fetch saved configurations
   const { data: configsResult, isLoading: configsLoading } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
   );
-  const configs = configsResult?.data || [];
+  const configs = (configsResult?.data || []) as WorkflowConfig[];
 
   // Fetch available models
   const { data: modelsResult, isLoading: modelsLoading } = trpc.workflow.getAvailableModels.useQuery(
@@ -37,6 +65,27 @@ export default function WorkflowLauncher() {
       setSelectedModel(availableModels[0]);
     }
   }, [availableModels, selectedModel]);
+
+  useEffect(() => {
+    if (!urlConfigId) {
+      lastPrefilledConfigId.current = null;
+      return;
+    }
+
+    if (lastPrefilledConfigId.current === urlConfigId) {
+      return;
+    }
+
+    const config = configs.find((item) => item.id === urlConfigId);
+    if (!config) {
+      return;
+    }
+
+    setSelectedConfig(config.id.toString());
+    setInitialTask(config.initialTask);
+    setSelectedModel(config.llmModel);
+    lastPrefilledConfigId.current = urlConfigId;
+  }, [configs, urlConfigId]);
 
   // Create run mutation
   const createRunMutation = trpc.workflow.runs.create.useMutation({
@@ -68,11 +117,31 @@ export default function WorkflowLauncher() {
       return;
     }
 
+    const parsedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
+    const configId =
+      parsedConfigId !== undefined &&
+      Number.isInteger(parsedConfigId) &&
+      parsedConfigId > 0
+        ? parsedConfigId
+        : undefined;
+
     createRunMutation.mutate({
-      configId: selectedConfig ? parseInt(selectedConfig) : undefined,
+      configId,
       initialTask: initialTask.trim(),
       modelId: selectedModel || undefined,
     });
+  };
+
+  const handleConfigChange = (configId: string) => {
+    setSelectedConfig(configId);
+
+    const parsedConfigId = Number(configId);
+    const config = configs.find((item) => item.id === parsedConfigId);
+    if (!config) return;
+
+    setInitialTask(config.initialTask);
+    setSelectedModel(config.llmModel);
+    lastPrefilledConfigId.current = parsedConfigId;
   };
 
   if (!isAuthenticated) {
@@ -111,7 +180,7 @@ export default function WorkflowLauncher() {
               {/* Configuration Selection */}
               <div className="space-y-2">
                 <Label htmlFor="config">Use Saved Configuration (Optional)</Label>
-                <Select value={selectedConfig} onValueChange={setSelectedConfig}>
+                <Select value={selectedConfig} onValueChange={handleConfigChange}>
                   <SelectTrigger id="config" disabled={configsLoading}>
                     <SelectValue placeholder="Select a configuration..." />
                   </SelectTrigger>
