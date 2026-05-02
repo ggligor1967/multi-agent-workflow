@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   configsUseQuery: vi.fn(),
   modelsUseQuery: vi.fn(),
   runsCreateUseMutation: vi.fn(),
+  mutationOptions: undefined as unknown,
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -70,6 +71,15 @@ type RenderOptions = {
   models?: string[];
 };
 
+type MutationOptions = {
+  onSuccess?: (result: {
+    success: boolean;
+    data?: { id?: number };
+    error?: string;
+  }) => void;
+  onError?: (error: Error) => void;
+};
+
 const defaultConfigs: LauncherConfig[] = [
   {
     id: 123,
@@ -91,6 +101,10 @@ async function expectTriggerLabel(
   });
 }
 
+function getMutationOptions(): MutationOptions {
+  return (mocks.mutationOptions as MutationOptions | undefined) ?? {};
+}
+
 function renderLauncher(options: RenderOptions = {}) {
   const {
     search = "?configId=123",
@@ -107,9 +121,12 @@ function renderLauncher(options: RenderOptions = {}) {
     data: { data: models },
     isLoading: false,
   });
-  mocks.runsCreateUseMutation.mockReturnValue({
-    mutate: mocks.mutate,
-    isPending: false,
+  mocks.runsCreateUseMutation.mockImplementation((mutationOptions: MutationOptions) => {
+    mocks.mutationOptions = mutationOptions;
+    return {
+      mutate: mocks.mutate,
+      isPending: false,
+    };
   });
 
   return render(createElement(WorkflowLauncher));
@@ -124,6 +141,7 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
     mocks.configsUseQuery.mockReset();
     mocks.modelsUseQuery.mockReset();
     mocks.runsCreateUseMutation.mockReset();
+    mocks.mutationOptions = undefined;
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
 
@@ -221,5 +239,61 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
       initialTask: "Run a DOM smoke test",
       modelId: "deepseek-v3.1:671b-cloud",
     });
+  });
+
+  it("shows a success state with the created run id and monitor navigation after a successful submit", async () => {
+    renderLauncher();
+
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText(/Initial Task/i) as HTMLTextAreaElement).value
+      ).toBe("Generate a release checklist");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Launch Workflow/i }));
+
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      configId: 123,
+      initialTask: "Generate a release checklist",
+      modelId: "llama3.2:latest",
+    });
+
+    getMutationOptions().onSuccess?.({
+      success: true,
+      data: { id: 456 },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Workflow created successfully/i)).toBeTruthy();
+    });
+
+    expect(screen.getByText(/Run ID: 456/i)).toBeTruthy();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Run Monitor/i }));
+
+    expect(mocks.navigate).toHaveBeenLastCalledWith("/runs/456");
+    expect(screen.getByRole("button", { name: /View History/i })).toBeTruthy();
+  });
+
+  it("keeps the existing error toast behavior and does not show a success state when submit fails", async () => {
+    renderLauncher();
+
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText(/Initial Task/i) as HTMLTextAreaElement).value
+      ).toBe("Generate a release checklist");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Launch Workflow/i }));
+
+    getMutationOptions().onError?.(new Error("Network down"));
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("Error: Network down");
+    });
+
+    expect(screen.queryByText(/Workflow created successfully/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Open Run Monitor/i })).toBeNull();
   });
 });
