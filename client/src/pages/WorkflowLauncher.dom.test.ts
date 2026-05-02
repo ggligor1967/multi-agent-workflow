@@ -229,8 +229,10 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
     const configTrigger = container.querySelector("#config");
     const modelTrigger = container.querySelector("#model");
 
-    expect(configTrigger?.textContent ?? "").toContain("Release checklist");
-    expect(modelTrigger?.textContent ?? "").toContain("llama3.2:latest");
+    await waitFor(() => {
+      expect(configTrigger?.textContent ?? "").toContain("Release checklist");
+      expect(modelTrigger?.textContent ?? "").toContain("llama3.2:latest");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /Launch Workflow/i }));
 
@@ -260,7 +262,9 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
     });
 
     const modelTrigger = container.querySelector("#model");
-    expect(modelTrigger?.textContent ?? "").toContain("deepseek-v3.1:671b-cloud");
+    await waitFor(() => {
+      expect(modelTrigger?.textContent ?? "").toContain("deepseek-v3.1:671b-cloud");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /Launch Workflow/i }));
 
@@ -285,8 +289,10 @@ describe("WorkflowLauncher DOM smoke coverage", () => {
     const configTrigger = container.querySelector("#config");
     const modelTrigger = container.querySelector("#model");
 
-    expect(configTrigger?.textContent ?? "").toContain("Select a configuration");
-    expect(modelTrigger?.textContent ?? "").toContain("deepseek-v3.1:671b-cloud");
+    await waitFor(() => {
+      expect(configTrigger?.textContent ?? "").toContain("Select a configuration");
+      expect(modelTrigger?.textContent ?? "").toContain("deepseek-v3.1:671b-cloud");
+    });
 
     fireEvent.change(screen.getByLabelText(/Initial Task/i), {
       target: { value: "Run a DOM smoke test" },
