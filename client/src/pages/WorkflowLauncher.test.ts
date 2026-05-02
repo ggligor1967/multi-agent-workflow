@@ -104,4 +104,42 @@ describe("WorkflowLauncher config prefill helpers", () => {
   it("waits for available models before URL prefill", () => {
     expect(shouldApplyUrlConfigPrefill(123, null, true)).toBe(false);
   });
+
+  it.each([
+    ["missing configId", "tab=launcher"],
+    ["empty configId", "configId="],
+    ["non-numeric configId", "configId=abc"],
+    ["zero configId", "configId=0"],
+    ["negative configId", "configId=-1"],
+    ["decimal configId", "configId=12.5"],
+    ["mixed string configId", "configId=123abc"],
+  ])("treats %s as absent for URL prefill", (_label, search) => {
+    const urlConfigId = parsePositiveConfigId(search);
+
+    expect(urlConfigId).toBeNull();
+    expect(shouldApplyUrlConfigPrefill(urlConfigId, null, false)).toBe(false);
+  });
+
+  it.each([
+    ["missing config selection", ""],
+    ["empty config selection", ""],
+    ["non-numeric config selection", "abc"],
+    ["zero config selection", "0"],
+    ["negative config selection", "-1"],
+    ["decimal config selection", "12.5"],
+    ["mixed string config selection", "123abc"],
+  ])("omits configId from run-create input for %s", (_label, selectedConfig) => {
+    expect(
+      buildRunCreateInput(
+        selectedConfig,
+        "Run a launcher task",
+        "deepseek-v3.1:671b-cloud",
+        availableModels
+      )
+    ).toEqual({
+      configId: undefined,
+      initialTask: "Run a launcher task",
+      modelId: "deepseek-v3.1:671b-cloud",
+    });
+  });
 });
