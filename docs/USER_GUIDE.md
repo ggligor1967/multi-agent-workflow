@@ -45,15 +45,18 @@ The application has a sidebar navigation with the following sections:
 
 The Dashboard provides a quick overview of your workflow activity:
 
-### Quick Stats
+### Recent Activity Summary
 
 - **Recent Pending** - Queued in the latest 10 workflow runs
 - **Recent Running** - In-progress runs from the latest 10 workflow runs
 - **Recent Completed** - Successfully finished runs from the latest 10 workflow runs
 - **Recent Failed** - Recent runs that need attention
-- **Saved Configs** - Available workflow configurations ready to relaunch
 
 The status summary is based on the latest 10 workflow runs shown on the dashboard.
+
+### Saved Configs
+
+Shows how many saved workflow configurations are available to launch or relaunch.
 
 ### Recent Activity
 
@@ -76,7 +79,7 @@ Shows the most recent workflow runs with their status:
 
 ### Step 1: Navigate to Launcher
 
-Click **"Launcher"** in the sidebar or the **"New Workflow"** button on the Dashboard.
+Click **"Launcher"** in the sidebar or the **"Launch Workflow"** button on the Dashboard.
 
 ### Step 2: Configure Your Task
 

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -82,7 +81,7 @@ function renderDashboard({
     isLoading: false,
   });
 
-  return render(createElement(Dashboard));
+  return render(<Dashboard />);
 }
 
 describe("Dashboard DOM smoke coverage", () => {
@@ -188,11 +187,15 @@ describe("Dashboard DOM smoke coverage", () => {
       ],
     });
 
+    expect(mocks.runsListUseQuery).toHaveBeenCalledWith(
+      { limit: 10, offset: 0 },
+      { enabled: true }
+    );
     screen.getByText("Based on the latest 10 workflow runs");
-    expect(screen.getByLabelText("Recent Pending count").textContent).toBe("1");
-    expect(screen.getByLabelText("Recent Running count").textContent).toBe("1");
-    expect(screen.getByLabelText("Recent Completed count").textContent).toBe("1");
-    expect(screen.getByLabelText("Recent Failed count").textContent).toBe("1");
+    expect(screen.getByLabelText("Recent Pending").textContent).toBe("1");
+    expect(screen.getByLabelText("Recent Running").textContent).toBe("1");
+    expect(screen.getByLabelText("Recent Completed").textContent).toBe("1");
+    expect(screen.getByLabelText("Recent Failed").textContent).toBe("1");
     expect(screen.getByText("Saved Configs")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
   });
@@ -203,11 +206,11 @@ describe("Dashboard DOM smoke coverage", () => {
       configs: [],
     });
 
-    expect(screen.getByLabelText("Recent Pending count").textContent).toBe("0");
-    expect(screen.getByLabelText("Recent Running count").textContent).toBe("0");
-    expect(screen.getByLabelText("Recent Completed count").textContent).toBe("0");
-    expect(screen.getByLabelText("Recent Failed count").textContent).toBe("0");
-    screen.getByText("No workflow runs yet. Start by launching a new workflow.");
+    expect(screen.getByLabelText("Recent Pending").textContent).toBe("0");
+    expect(screen.getByLabelText("Recent Running").textContent).toBe("0");
+    expect(screen.getByLabelText("Recent Completed").textContent).toBe("0");
+    expect(screen.getByLabelText("Recent Failed").textContent).toBe("0");
+    screen.getByText("No workflow runs yet. Use Launch Workflow to start one.");
   });
 
   it("keeps dashboard quick actions and recent run navigation available", () => {

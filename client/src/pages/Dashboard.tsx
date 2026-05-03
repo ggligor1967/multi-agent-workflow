@@ -24,26 +24,46 @@ export default function Dashboard() {
   const runs = runsResult?.data ?? [];
   const configs = configsResult?.data ?? [];
   const loading = isRunsLoading || isConfigsLoading;
+  const recentRunStatusCounts = runs.reduce(
+    (counts, run) => {
+      if (run.status === "pending") counts.pending += 1;
+      else if (run.status === "running") counts.running += 1;
+      else if (run.status === "completed") counts.completed += 1;
+      else if (run.status === "failed") counts.failed += 1;
+
+      return counts;
+    },
+    {
+      pending: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+    }
+  );
   const recentRunStatusCards = [
     {
+      key: "pending",
       title: "Recent Pending",
       description: "Queued in recent activity",
-      count: runs.filter((run) => run.status === "pending").length,
+      count: recentRunStatusCounts.pending,
     },
     {
+      key: "running",
       title: "Recent Running",
       description: "Currently in progress",
-      count: runs.filter((run) => run.status === "running").length,
+      count: recentRunStatusCounts.running,
     },
     {
+      key: "completed",
       title: "Recent Completed",
       description: "Finished successfully",
-      count: runs.filter((run) => run.status === "completed").length,
+      count: recentRunStatusCounts.completed,
     },
     {
+      key: "failed",
       title: "Recent Failed",
       description: "Need attention",
-      count: runs.filter((run) => run.status === "failed").length,
+      count: recentRunStatusCounts.failed,
     },
   ];
 
@@ -93,23 +113,29 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {recentRunStatusCards.map((card) => (
-              <Card key={card.title}>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">{card.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div aria-label={`${card.title} count`} className="text-2xl font-bold">
-                    {card.count}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">{card.description}</p>
-                </CardContent>
-              </Card>
-            ))}
+            {recentRunStatusCards.map((card) => {
+              const titleId = `dashboard-stat-${card.key}`;
+
+              return (
+                <Card key={card.key}>
+                  <CardHeader className="pb-3">
+                    <h3 id={titleId} className="text-sm font-medium leading-none font-semibold">
+                      {card.title}
+                    </h3>
+                  </CardHeader>
+                  <CardContent>
+                    <output aria-labelledby={titleId} className="block text-2xl font-bold">
+                      {card.count}
+                    </output>
+                    <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
 
-        <div className="mb-8 max-w-sm">
+        <div className="mb-8">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Saved Configs</CardTitle>
@@ -157,7 +183,7 @@ export default function Dashboard() {
           <CardContent>
             {runs.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
-                <p>No workflow runs yet. Start by launching a new workflow.</p>
+                <p>No workflow runs yet. Use Launch Workflow to start one.</p>
               </div>
             ) : (
               <div className="space-y-4">
