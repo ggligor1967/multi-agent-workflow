@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Plus, Zap } from "lucide-react";
+import { AlertCircle, Loader2, Play, Plus, Zap } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function Dashboard() {
@@ -30,10 +30,20 @@ export default function Dashboard() {
     { enabled: isAuthenticated }
   );
 
-  const runs = runsResult?.data ?? [];
-  const configs = configsResult?.data ?? [];
-  const hasRunsData = Boolean(runsResult);
-  const hasConfigsData = Boolean(configsResult);
+  const runsLoadError =
+    runsError ??
+    (runsResult?.success === false
+      ? new Error(runsResult.error || "Unable to load recent workflow runs.")
+      : null);
+  const configsLoadError =
+    configsError ??
+    (configsResult?.success === false
+      ? new Error(configsResult.error || "Unable to load saved workflow configs.")
+      : null);
+  const hasRunsData = runsResult?.success === true;
+  const hasConfigsData = configsResult?.success === true;
+  const runs = hasRunsData ? runsResult.data ?? [] : [];
+  const configs = hasConfigsData ? configsResult.data ?? [] : [];
   const loading = isRunsLoading || isConfigsLoading;
   const recentRunStatusCounts = runs.reduce(
     (counts, run) => {
@@ -116,10 +126,11 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {runsError || configsError ? (
+        {runsLoadError || configsLoadError ? (
           <div className="mb-8 space-y-4">
-            {runsError ? (
+            {runsLoadError ? (
               <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Unable to load recent workflow runs.</AlertTitle>
                 <AlertDescription>
                   The dashboard could not refresh recent workflow activity right now.
@@ -127,8 +138,9 @@ export default function Dashboard() {
               </Alert>
             ) : null}
 
-            {configsError ? (
+            {configsLoadError ? (
               <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Unable to load saved workflow configs.</AlertTitle>
                 <AlertDescription>
                   The dashboard could not refresh saved workflow configurations right now.

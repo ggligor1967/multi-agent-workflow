@@ -64,29 +64,43 @@ type DashboardConfig = {
   updatedAt: string | Date;
 };
 
-function renderDashboard({
-  runs = [],
-  configs = [],
-  runsError = null,
-  configsError = null,
-  hasRunsData = true,
-  hasConfigsData = true,
-}: {
+type DashboardQuerySuccess<T> = {
+  success: true;
+  data: T;
+};
+
+type DashboardQueryFailure = {
+  success: false;
+  error: string;
+};
+
+type DashboardQueryResult<T> = DashboardQuerySuccess<T> | DashboardQueryFailure;
+
+function renderDashboard(options: {
   runs?: DashboardRun[];
   configs?: DashboardConfig[];
   runsError?: Error | null;
   configsError?: Error | null;
-  hasRunsData?: boolean;
-  hasConfigsData?: boolean;
+  runsData?: DashboardQueryResult<DashboardRun[]> | undefined;
+  configsData?: DashboardQueryResult<DashboardConfig[]> | undefined;
 } = {}) {
+  const runs = options.runs ?? [];
+  const configs = options.configs ?? [];
+  const runsError = options.runsError ?? null;
+  const configsError = options.configsError ?? null;
+  const runsData = "runsData" in options ? options.runsData : { success: true, data: runs };
+  const configsData = "configsData" in options
+    ? options.configsData
+    : { success: true, data: configs };
+
   mocks.runsListUseQuery.mockReturnValue({
-    data: hasRunsData ? { data: runs } : undefined,
+    data: runsData,
     error: runsError,
     isLoading: false,
   });
 
   mocks.configsListUseQuery.mockReturnValue({
-    data: hasConfigsData ? { data: configs } : undefined,
+    data: configsData,
     error: configsError,
     isLoading: false,
   });
@@ -241,8 +255,10 @@ describe("Dashboard DOM smoke coverage", () => {
           updatedAt: "2026-05-03T10:00:00.000Z",
         },
       ],
-      runsError: new Error("Unable to load runs"),
-      hasRunsData: false,
+      runsData: {
+        success: false,
+        error: "DB unavailable",
+      },
     });
 
     expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
@@ -250,6 +266,7 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.getByText("Saved Configs")).toBeTruthy();
     expect(screen.queryByText("Recent Activity Summary")).toBeNull();
     expect(screen.queryByText("Recent Workflow Runs")).toBeNull();
+    expect(screen.queryByText("No workflow runs yet. Use Launch Workflow to start one.")).toBeNull();
   });
 
   it("shows a saved workflow configs error while preserving recent run data", () => {
@@ -269,8 +286,10 @@ describe("Dashboard DOM smoke coverage", () => {
           updatedAt: "2026-05-03T10:00:00.000Z",
         },
       ],
-      configsError: new Error("Unable to load configs"),
-      hasConfigsData: false,
+      configsData: {
+        success: false,
+        error: "Config DB unavailable",
+      },
     });
 
     expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
@@ -282,10 +301,12 @@ describe("Dashboard DOM smoke coverage", () => {
 
   it("shows both dashboard load errors without crashing", () => {
     renderDashboard({
-      runsError: new Error("Unable to load runs"),
-      configsError: new Error("Unable to load configs"),
-      hasRunsData: false,
-      hasConfigsData: false,
+      runsError: new Error("Network failure"),
+      runsData: undefined,
+      configsData: {
+        success: false,
+        error: "Configs unavailable",
+      },
     });
 
     expect(screen.getByText("Workflow Dashboard")).toBeTruthy();
@@ -293,6 +314,19 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(2);
     expect(screen.getByRole("button", { name: /Launch Workflow/i })).toBeTruthy();
+  });
+
+  it("shows a query-level workflow runs error without treating it as empty success", () => {
+    renderDashboard({
+      runsError: new Error("Transport failure"),
+      runsData: undefined,
+      configs: [],
+    });
+
+    expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
+    expect(screen.queryByText("Recent Activity Summary")).toBeNull();
+    expect(screen.queryByText("No workflow runs yet. Use Launch Workflow to start one.")).toBeNull();
+    expect(screen.getByText("Saved Configs")).toBeTruthy();
   });
 
   it("keeps dashboard quick actions and recent run navigation available", () => {
