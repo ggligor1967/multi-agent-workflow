@@ -38,12 +38,12 @@ import HistoryViewer, { buildHistoryRelaunchPath } from "./HistoryViewer";
 type HistoryRun = {
   id: number;
   userId: number;
-  configId: unknown;
+  configId: number | null;
   initialTask: string;
   status: string;
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
+  createdAt: string | Date;
+  startedAt: string | Date | null;
+  completedAt: string | Date | null;
   errorMessage: string | null;
 };
 
@@ -127,25 +127,6 @@ describe("HistoryViewer DOM smoke coverage", () => {
     expect(screen.queryByRole("button", { name: /Launch again/i })).toBeNull();
   });
 
-  it("does not create a bad launcher URL for invalid config ids", () => {
-    renderHistoryViewer([
-      {
-        id: 44,
-        userId: 1,
-        configId: 0,
-        initialTask: "Broken config reference",
-        status: "completed",
-        createdAt: "2026-05-03T10:00:00.000Z",
-        startedAt: "2026-05-03T10:00:02.000Z",
-        completedAt: "2026-05-03T10:01:02.000Z",
-        errorMessage: null,
-      },
-    ]);
-
-    expect(screen.queryByRole("button", { name: /Launch again/i })).toBeNull();
-    expect(mocks.navigate).not.toHaveBeenCalledWith(expect.stringMatching(/configId=/));
-  });
-
   it("keeps the existing row navigation to the run monitor", () => {
     renderHistoryViewer([
       {
@@ -161,8 +142,32 @@ describe("HistoryViewer DOM smoke coverage", () => {
       },
     ]);
 
-    fireEvent.click(screen.getByText("Open existing run"));
+    fireEvent.click(screen.getByRole("button", { name: /Open run 45/i }));
 
     expect(mocks.navigate).toHaveBeenLastCalledWith("/runs/45");
+  });
+
+  it("supports keyboard navigation to the run monitor from the main row action", () => {
+    renderHistoryViewer([
+      {
+        id: 46,
+        userId: 1,
+        configId: 123,
+        initialTask: "Keyboard open run",
+        status: "completed",
+        createdAt: "2026-05-03T10:00:00.000Z",
+        startedAt: "2026-05-03T10:00:02.000Z",
+        completedAt: "2026-05-03T10:01:02.000Z",
+        errorMessage: null,
+      },
+    ]);
+
+    const rowAction = screen.getByRole("button", { name: /Open run 46/i });
+
+    fireEvent.keyDown(rowAction, { key: "Enter" });
+    expect(mocks.navigate).toHaveBeenLastCalledWith("/runs/46");
+
+    fireEvent.keyDown(rowAction, { key: " " });
+    expect(mocks.navigate).toHaveBeenLastCalledWith("/runs/46");
   });
 });

@@ -304,48 +304,58 @@ export default function HistoryViewer() {
                   return (
                     <div
                       key={run.id}
-                      onClick={() => navigate(`/runs/${run.id}`)}
-                      className="flex items-center gap-4 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                      className="flex items-center gap-4 p-3 border rounded-lg hover:bg-gray-50 transition-colors"
                     >
-                      {getStatusIcon(run.status)}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open run ${run.id}`}
+                        onClick={() => navigate(`/runs/${run.id}`)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            navigate(`/runs/${run.id}`);
+                          }
+                        }}
+                        className="flex flex-1 items-center gap-4 min-w-0 cursor-pointer"
+                      >
+                        {getStatusIcon(run.status)}
 
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {run.initialTask}
-                        </p>
-                        <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {formatDate(run.createdAt)}
-                          </span>
-                          <span>
-                            Duration: {formatDuration(run.createdAt, run.completedAt)}
-                          </span>
-                          <span className="text-gray-400">
-                            ID: {run.id}
-                          </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {run.initialTask}
+                          </p>
+                          <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              {formatDate(run.createdAt)}
+                            </span>
+                            <span>
+                              Duration: {formatDuration(run.createdAt, run.completedAt)}
+                            </span>
+                            <span className="text-gray-400">
+                              ID: {run.id}
+                            </span>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-2">
                         <Badge className={getStatusBadge(run.status)}>
                           {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
                         </Badge>
-                        {relaunchPath ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="gap-2"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              navigate(relaunchPath);
-                            }}
-                          >
-                            Launch again
-                          </Button>
-                        ) : null}
                       </div>
+
+                      {relaunchPath ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="gap-2"
+                          onClick={() => navigate(relaunchPath)}
+                        >
+                          <Play className="w-4 h-4" />
+                          Launch again
+                        </Button>
+                      ) : null}
                     </div>
                   );
                 })}
