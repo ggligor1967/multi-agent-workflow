@@ -24,6 +24,28 @@ export default function Dashboard() {
   const runs = runsResult?.data ?? [];
   const configs = configsResult?.data ?? [];
   const loading = isRunsLoading || isConfigsLoading;
+  const recentRunStatusCards = [
+    {
+      title: "Recent Pending",
+      description: "Queued in recent activity",
+      count: runs.filter((run) => run.status === "pending").length,
+    },
+    {
+      title: "Recent Running",
+      description: "Currently in progress",
+      count: runs.filter((run) => run.status === "running").length,
+    },
+    {
+      title: "Recent Completed",
+      description: "Finished successfully",
+      count: runs.filter((run) => run.status === "completed").length,
+    },
+    {
+      title: "Recent Failed",
+      description: "Need attention",
+      count: runs.filter((run) => run.status === "failed").length,
+    },
+  ];
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -63,42 +85,38 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Total Runs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{runs.length}</div>
-              <p className="text-xs text-gray-500 mt-1">Workflow executions</p>
-            </CardContent>
-          </Card>
+        {/* Recent Activity Summary */}
+        <div className="mb-8">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Recent Activity Summary</h2>
+            <p className="text-sm text-gray-500">Based on the latest 10 workflow runs</p>
+          </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            {recentRunStatusCards.map((card) => (
+              <Card key={card.title}>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">{card.title}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div aria-label={`${card.title} count`} className="text-2xl font-bold">
+                    {card.count}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-8 max-w-sm">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Saved Configs</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{configs.length}</div>
-              <p className="text-xs text-gray-500 mt-1">Workflow configurations</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {runs.length > 0
-                  ? Math.round(
-                      (runs.filter((r) => r.status === "completed").length / runs.length) * 100
-                    )
-                  : 0}
-                %
-              </div>
-              <p className="text-xs text-gray-500 mt-1">Completed runs</p>
+              <p className="text-xs text-gray-500 mt-1">Available workflow configurations</p>
             </CardContent>
           </Card>
         </div>
