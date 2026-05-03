@@ -85,6 +85,8 @@ function renderDashboard(options: {
   configsError?: Error | null;
   runsData?: DashboardQueryResult<DashboardRun[]> | undefined;
   configsData?: DashboardQueryResult<DashboardConfig[]> | undefined;
+  runsIsLoading?: boolean;
+  configsIsLoading?: boolean;
   runsIsFetching?: boolean;
   configsIsFetching?: boolean;
   runsRefetch?: ReturnType<typeof vi.fn>;
@@ -98,6 +100,8 @@ function renderDashboard(options: {
   const configsData = "configsData" in options
     ? options.configsData
     : { success: true, data: configs };
+  const runsIsLoading = options.runsIsLoading ?? false;
+  const configsIsLoading = options.configsIsLoading ?? false;
   const runsIsFetching = options.runsIsFetching ?? false;
   const configsIsFetching = options.configsIsFetching ?? false;
   const runsRefetch = options.runsRefetch ?? mocks.runsRefetch;
@@ -107,7 +111,7 @@ function renderDashboard(options: {
     data: runsData,
     error: runsError,
     isFetching: runsIsFetching,
-    isLoading: false,
+    isLoading: runsIsLoading,
     refetch: runsRefetch,
   });
 
@@ -115,7 +119,7 @@ function renderDashboard(options: {
     data: configsData,
     error: configsError,
     isFetching: configsIsFetching,
-    isLoading: false,
+    isLoading: configsIsLoading,
     refetch: configsRefetch,
   });
 
@@ -343,6 +347,39 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(mocks.configsRefetch).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the dashboard visible during a runs retry after an error and shows a spinner", () => {
+    renderDashboard({
+      runsData: {
+        success: false,
+        error: "DB unavailable",
+      },
+      runsIsLoading: true,
+      runsIsFetching: true,
+      configs: [
+        {
+          id: 10,
+          userId: 1,
+          name: "Starter config",
+          description: null,
+          initialTask: "Ship it",
+          llmModel: "mistral-small",
+          mistralModel: "mistral-small",
+          isActive: 1,
+          createdAt: "2026-05-03T10:00:00.000Z",
+          updatedAt: "2026-05-03T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(screen.getByText("Workflow Dashboard")).toBeTruthy();
+    expect(screen.getByText("Saved Configs")).toBeTruthy();
+    const retryRunsButton = screen.getByRole("button", {
+      name: /Retry recent workflow runs/i,
+    }) as HTMLButtonElement;
+    expect(retryRunsButton.disabled).toBe(true);
+    expect(retryRunsButton.querySelector("svg.animate-spin")).toBeTruthy();
+  });
+
   it("shows both dashboard load errors without crashing", () => {
     renderDashboard({
       runsError: new Error("Network failure"),
@@ -375,22 +412,38 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.getByText("Saved Configs")).toBeTruthy();
   });
 
-  it("disables retry buttons while their corresponding query is fetching", () => {
+  it("keeps the dashboard visible during a configs retry after an error and shows a spinner", () => {
     renderDashboard({
-      runsData: {
-        success: false,
-        error: "DB unavailable",
-      },
       configsData: {
         success: false,
         error: "Configs unavailable",
       },
-      runsIsFetching: true,
+      configsIsLoading: true,
       configsIsFetching: true,
+      runs: [
+        {
+          id: 7,
+          userId: 1,
+          configId: null,
+          status: "running",
+          initialTask: "Open recent run",
+          selectedModel: null,
+          startedAt: "2026-05-03T10:00:00.000Z",
+          completedAt: null,
+          errorMessage: null,
+          createdAt: "2026-05-03T10:00:00.000Z",
+          updatedAt: "2026-05-03T10:00:00.000Z",
+        },
+      ],
     });
 
-    expect((screen.getByRole("button", { name: /Retry recent workflow runs/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /Retry saved workflow configs/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Workflow Dashboard")).toBeTruthy();
+    expect(screen.getByText("Open recent run")).toBeTruthy();
+    const retryConfigsButton = screen.getByRole("button", {
+      name: /Retry saved workflow configs/i,
+    }) as HTMLButtonElement;
+    expect(retryConfigsButton.disabled).toBe(true);
+    expect(retryConfigsButton.querySelector("svg.animate-spin")).toBeTruthy();
   });
 
   it("keeps dashboard quick actions and recent run navigation available", () => {

@@ -48,7 +48,9 @@ export default function Dashboard() {
   const hasConfigsData = configsResult?.success === true;
   const runs = hasRunsData ? runsResult.data ?? [] : [];
   const configs = hasConfigsData ? configsResult.data ?? [] : [];
-  const loading = isRunsLoading || isConfigsLoading;
+  const loading =
+    (isRunsLoading && !runsResult && !runsLoadError) ||
+    (isConfigsLoading && !configsResult && !configsLoadError);
   const recentRunStatusCounts = runs.reduce(
     (counts, run) => {
       if (run.status === "pending") counts.pending += 1;
@@ -142,12 +144,13 @@ export default function Dashboard() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => {
-                        void refetchRuns();
-                      }}
+                      onClick={() => void refetchRuns()}
                       disabled={isRunsFetching}
                       aria-label="Retry recent workflow runs"
                     >
+                      {isRunsFetching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : null}
                       Retry runs
                     </Button>
                   </div>
@@ -165,12 +168,13 @@ export default function Dashboard() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => {
-                        void refetchConfigs();
-                      }}
+                      onClick={() => void refetchConfigs()}
                       disabled={isConfigsFetching}
                       aria-label="Retry saved workflow configs"
                     >
+                      {isConfigsFetching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : null}
                       Retry configs
                     </Button>
                   </div>
