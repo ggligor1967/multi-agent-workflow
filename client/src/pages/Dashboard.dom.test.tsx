@@ -67,17 +67,27 @@ type DashboardConfig = {
 function renderDashboard({
   runs = [],
   configs = [],
+  runsError = null,
+  configsError = null,
+  hasRunsData = true,
+  hasConfigsData = true,
 }: {
   runs?: DashboardRun[];
   configs?: DashboardConfig[];
+  runsError?: Error | null;
+  configsError?: Error | null;
+  hasRunsData?: boolean;
+  hasConfigsData?: boolean;
 } = {}) {
   mocks.runsListUseQuery.mockReturnValue({
-    data: { data: runs },
+    data: hasRunsData ? { data: runs } : undefined,
+    error: runsError,
     isLoading: false,
   });
 
   mocks.configsListUseQuery.mockReturnValue({
-    data: { data: configs },
+    data: hasConfigsData ? { data: configs } : undefined,
+    error: configsError,
     isLoading: false,
   });
 
@@ -210,7 +220,79 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.getByLabelText("Recent Running").textContent).toBe("0");
     expect(screen.getByLabelText("Recent Completed").textContent).toBe("0");
     expect(screen.getByLabelText("Recent Failed").textContent).toBe("0");
+    expect(screen.queryByText("Unable to load recent workflow runs.")).toBeNull();
+    expect(screen.queryByText("Unable to load saved workflow configs.")).toBeNull();
     screen.getByText("No workflow runs yet. Use Launch Workflow to start one.");
+  });
+
+  it("shows a recent workflow runs error while preserving saved config data", () => {
+    renderDashboard({
+      configs: [
+        {
+          id: 10,
+          userId: 1,
+          name: "Starter config",
+          description: null,
+          initialTask: "Ship it",
+          llmModel: "mistral-small",
+          mistralModel: "mistral-small",
+          isActive: 1,
+          createdAt: "2026-05-03T10:00:00.000Z",
+          updatedAt: "2026-05-03T10:00:00.000Z",
+        },
+      ],
+      runsError: new Error("Unable to load runs"),
+      hasRunsData: false,
+    });
+
+    expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByText("Saved Configs")).toBeTruthy();
+    expect(screen.queryByText("Recent Activity Summary")).toBeNull();
+    expect(screen.queryByText("Recent Workflow Runs")).toBeNull();
+  });
+
+  it("shows a saved workflow configs error while preserving recent run data", () => {
+    renderDashboard({
+      runs: [
+        {
+          id: 7,
+          userId: 1,
+          configId: null,
+          status: "running",
+          initialTask: "Open recent run",
+          selectedModel: null,
+          startedAt: "2026-05-03T10:00:00.000Z",
+          completedAt: null,
+          errorMessage: null,
+          createdAt: "2026-05-03T10:00:00.000Z",
+          updatedAt: "2026-05-03T10:00:00.000Z",
+        },
+      ],
+      configsError: new Error("Unable to load configs"),
+      hasConfigsData: false,
+    });
+
+    expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByLabelText("Recent Running").textContent).toBe("1");
+    expect(screen.getByText("Open recent run")).toBeTruthy();
+    expect(screen.queryByText("Saved Configs")).toBeNull();
+  });
+
+  it("shows both dashboard load errors without crashing", () => {
+    renderDashboard({
+      runsError: new Error("Unable to load runs"),
+      configsError: new Error("Unable to load configs"),
+      hasRunsData: false,
+      hasConfigsData: false,
+    });
+
+    expect(screen.getByText("Workflow Dashboard")).toBeTruthy();
+    expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
+    expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Launch Workflow/i })).toBeTruthy();
   });
 
   it("keeps dashboard quick actions and recent run navigation available", () => {

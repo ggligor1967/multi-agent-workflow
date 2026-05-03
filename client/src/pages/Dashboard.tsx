@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,18 +12,28 @@ export default function Dashboard() {
   const { user, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
 
-  const { data: runsResult, isLoading: isRunsLoading } = trpc.workflow.runs.list.useQuery(
+  const {
+    data: runsResult,
+    error: runsError,
+    isLoading: isRunsLoading,
+  } = trpc.workflow.runs.list.useQuery(
     { limit: 10, offset: 0 },
     { enabled: isAuthenticated }
   );
 
-  const { data: configsResult, isLoading: isConfigsLoading } = trpc.workflow.configs.list.useQuery(
+  const {
+    data: configsResult,
+    error: configsError,
+    isLoading: isConfigsLoading,
+  } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
   );
 
   const runs = runsResult?.data ?? [];
   const configs = configsResult?.data ?? [];
+  const hasRunsData = Boolean(runsResult);
+  const hasConfigsData = Boolean(configsResult);
   const loading = isRunsLoading || isConfigsLoading;
   const recentRunStatusCounts = runs.reduce(
     (counts, run) => {
@@ -105,47 +116,73 @@ export default function Dashboard() {
           </p>
         </div>
 
+        {runsError || configsError ? (
+          <div className="mb-8 space-y-4">
+            {runsError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Unable to load recent workflow runs.</AlertTitle>
+                <AlertDescription>
+                  The dashboard could not refresh recent workflow activity right now.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {configsError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Unable to load saved workflow configs.</AlertTitle>
+                <AlertDescription>
+                  The dashboard could not refresh saved workflow configurations right now.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Recent Activity Summary */}
-        <div className="mb-8">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Recent Activity Summary</h2>
-            <p className="text-sm text-gray-500">Based on the latest 10 workflow runs</p>
+        {hasRunsData ? (
+          <div className="mb-8">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Recent Activity Summary</h2>
+              <p className="text-sm text-gray-500">Based on the latest 10 workflow runs</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {recentRunStatusCards.map((card) => {
+                const titleId = `dashboard-stat-${card.key}`;
+
+                return (
+                  <Card key={card.key}>
+                    <CardHeader className="pb-3">
+                      <h3 id={titleId} className="text-sm font-medium leading-none font-semibold">
+                        {card.title}
+                      </h3>
+                    </CardHeader>
+                    <CardContent>
+                      <output aria-labelledby={titleId} className="block text-2xl font-bold">
+                        {card.count}
+                      </output>
+                      <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           </div>
+        ) : null}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {recentRunStatusCards.map((card) => {
-              const titleId = `dashboard-stat-${card.key}`;
-
-              return (
-                <Card key={card.key}>
-                  <CardHeader className="pb-3">
-                    <h3 id={titleId} className="text-sm font-medium leading-none font-semibold">
-                      {card.title}
-                    </h3>
-                  </CardHeader>
-                  <CardContent>
-                    <output aria-labelledby={titleId} className="block text-2xl font-bold">
-                      {card.count}
-                    </output>
-                    <p className="text-xs text-gray-500 mt-1">{card.description}</p>
-                  </CardContent>
-                </Card>
-              );
-            })}
+        {hasConfigsData ? (
+          <div className="mb-8">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium">Saved Configs</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{configs.length}</div>
+                <p className="text-xs text-gray-500 mt-1">Available workflow configurations</p>
+              </CardContent>
+            </Card>
           </div>
-        </div>
-
-        <div className="mb-8">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Saved Configs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{configs.length}</div>
-              <p className="text-xs text-gray-500 mt-1">Available workflow configurations</p>
-            </CardContent>
-          </Card>
-        </div>
+        ) : null}
 
         {/* Action Buttons */}
         <div className="flex gap-4 mb-8">
@@ -175,44 +212,46 @@ export default function Dashboard() {
         </div>
 
         {/* Recent Runs */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Workflow Runs</CardTitle>
-            <CardDescription>Last 10 executions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {runs.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <p>No workflow runs yet. Use Launch Workflow to start one.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {runs.map((run) => (
-                  <div
-                    key={run.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/runs/${run.id}`)}
-                  >
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">
-                        {run.initialTask.substring(0, 50)}
-                        {run.initialTask.length > 50 ? "..." : ""}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {run.createdAt
-                          ? new Date(run.createdAt).toLocaleString()
-                          : "Unknown date"}
-                      </p>
+        {hasRunsData ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Workflow Runs</CardTitle>
+              <CardDescription>Last 10 executions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {runs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No workflow runs yet. Use Launch Workflow to start one.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {runs.map((run) => (
+                    <div
+                      key={run.id}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                      onClick={() => navigate(`/runs/${run.id}`)}
+                    >
+                      <div className="flex-1">
+                        <p className="font-medium text-gray-900">
+                          {run.initialTask.substring(0, 50)}
+                          {run.initialTask.length > 50 ? "..." : ""}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {run.createdAt
+                            ? new Date(run.createdAt).toLocaleString()
+                            : "Unknown date"}
+                        </p>
+                      </div>
+                      <Badge className={getStatusColor(run.status)}>
+                        {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
+                      </Badge>
                     </div>
-                    <Badge className={getStatusColor(run.status)}>
-                      {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </div>
   );
