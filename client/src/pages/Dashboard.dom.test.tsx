@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
   runsListUseQuery: vi.fn(),
   configsListUseQuery: vi.fn(),
+  runsRefetch: vi.fn(),
+  configsRefetch: vi.fn(),
 }));
 
 vi.mock("@/_core/hooks/useAuth", () => ({
@@ -83,6 +85,10 @@ function renderDashboard(options: {
   configsError?: Error | null;
   runsData?: DashboardQueryResult<DashboardRun[]> | undefined;
   configsData?: DashboardQueryResult<DashboardConfig[]> | undefined;
+  runsIsFetching?: boolean;
+  configsIsFetching?: boolean;
+  runsRefetch?: ReturnType<typeof vi.fn>;
+  configsRefetch?: ReturnType<typeof vi.fn>;
 } = {}) {
   const runs = options.runs ?? [];
   const configs = options.configs ?? [];
@@ -92,17 +98,25 @@ function renderDashboard(options: {
   const configsData = "configsData" in options
     ? options.configsData
     : { success: true, data: configs };
+  const runsIsFetching = options.runsIsFetching ?? false;
+  const configsIsFetching = options.configsIsFetching ?? false;
+  const runsRefetch = options.runsRefetch ?? mocks.runsRefetch;
+  const configsRefetch = options.configsRefetch ?? mocks.configsRefetch;
 
   mocks.runsListUseQuery.mockReturnValue({
     data: runsData,
     error: runsError,
+    isFetching: runsIsFetching,
     isLoading: false,
+    refetch: runsRefetch,
   });
 
   mocks.configsListUseQuery.mockReturnValue({
     data: configsData,
     error: configsError,
+    isFetching: configsIsFetching,
     isLoading: false,
+    refetch: configsRefetch,
   });
 
   return render(<Dashboard />);
@@ -114,6 +128,8 @@ describe("Dashboard DOM smoke coverage", () => {
     mocks.useAuth.mockReset();
     mocks.runsListUseQuery.mockReset();
     mocks.configsListUseQuery.mockReset();
+    mocks.runsRefetch.mockReset();
+    mocks.configsRefetch.mockReset();
 
     mocks.useAuth.mockReturnValue({
       isAuthenticated: true,
@@ -263,10 +279,24 @@ describe("Dashboard DOM smoke coverage", () => {
 
     expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Retry recent workflow runs/i })).toBeTruthy();
     expect(screen.getByText("Saved Configs")).toBeTruthy();
     expect(screen.queryByText("Recent Activity Summary")).toBeNull();
     expect(screen.queryByText("Recent Workflow Runs")).toBeNull();
     expect(screen.queryByText("No workflow runs yet. Use Launch Workflow to start one.")).toBeNull();
+  });
+
+  it("clicking the runs retry action calls the runs query refetch", () => {
+    renderDashboard({
+      runsData: {
+        success: false,
+        error: "DB unavailable",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry recent workflow runs/i }));
+
+    expect(mocks.runsRefetch).toHaveBeenCalledTimes(1);
   });
 
   it("shows a saved workflow configs error while preserving recent run data", () => {
@@ -294,9 +324,23 @@ describe("Dashboard DOM smoke coverage", () => {
 
     expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Retry saved workflow configs/i })).toBeTruthy();
     expect(screen.getByLabelText("Recent Running").textContent).toBe("1");
     expect(screen.getByText("Open recent run")).toBeTruthy();
     expect(screen.queryByText("Saved Configs")).toBeNull();
+  });
+
+  it("clicking the configs retry action calls the configs query refetch", () => {
+    renderDashboard({
+      configsData: {
+        success: false,
+        error: "Configs unavailable",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry saved workflow configs/i }));
+
+    expect(mocks.configsRefetch).toHaveBeenCalledTimes(1);
   });
 
   it("shows both dashboard load errors without crashing", () => {
@@ -313,6 +357,8 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.getByText("Unable to load recent workflow runs.")).toBeTruthy();
     expect(screen.getByText("Unable to load saved workflow configs.")).toBeTruthy();
     expect(screen.getAllByRole("alert")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Retry recent workflow runs/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Retry saved workflow configs/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Launch Workflow/i })).toBeTruthy();
   });
 
@@ -327,6 +373,24 @@ describe("Dashboard DOM smoke coverage", () => {
     expect(screen.queryByText("Recent Activity Summary")).toBeNull();
     expect(screen.queryByText("No workflow runs yet. Use Launch Workflow to start one.")).toBeNull();
     expect(screen.getByText("Saved Configs")).toBeTruthy();
+  });
+
+  it("disables retry buttons while their corresponding query is fetching", () => {
+    renderDashboard({
+      runsData: {
+        success: false,
+        error: "DB unavailable",
+      },
+      configsData: {
+        success: false,
+        error: "Configs unavailable",
+      },
+      runsIsFetching: true,
+      configsIsFetching: true,
+    });
+
+    expect((screen.getByRole("button", { name: /Retry recent workflow runs/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Retry saved workflow configs/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("keeps dashboard quick actions and recent run navigation available", () => {
