@@ -15,7 +15,9 @@ export default function Dashboard() {
   const {
     data: runsResult,
     error: runsError,
+    isFetching: isRunsFetching,
     isLoading: isRunsLoading,
+    refetch: refetchRuns,
   } = trpc.workflow.runs.list.useQuery(
     { limit: 10, offset: 0 },
     { enabled: isAuthenticated }
@@ -24,7 +26,9 @@ export default function Dashboard() {
   const {
     data: configsResult,
     error: configsError,
+    isFetching: isConfigsFetching,
     isLoading: isConfigsLoading,
+    refetch: refetchConfigs,
   } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
@@ -44,7 +48,9 @@ export default function Dashboard() {
   const hasConfigsData = configsResult?.success === true;
   const runs = hasRunsData ? runsResult.data ?? [] : [];
   const configs = hasConfigsData ? configsResult.data ?? [] : [];
-  const loading = isRunsLoading || isConfigsLoading;
+  const loading =
+    (isRunsLoading && !runsResult && !runsLoadError) ||
+    (isConfigsLoading && !configsResult && !configsLoadError);
   const recentRunStatusCounts = runs.reduce(
     (counts, run) => {
       if (run.status === "pending") counts.pending += 1;
@@ -133,7 +139,21 @@ export default function Dashboard() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Unable to load recent workflow runs.</AlertTitle>
                 <AlertDescription>
-                  The dashboard could not refresh recent workflow activity right now.
+                  <div className="space-y-3">
+                    <p>The dashboard could not refresh recent workflow activity right now.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void refetchRuns()}
+                      disabled={isRunsFetching}
+                      aria-label="Retry recent workflow runs"
+                    >
+                      {isRunsFetching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      Retry runs
+                    </Button>
+                  </div>
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -143,7 +163,21 @@ export default function Dashboard() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Unable to load saved workflow configs.</AlertTitle>
                 <AlertDescription>
-                  The dashboard could not refresh saved workflow configurations right now.
+                  <div className="space-y-3">
+                    <p>The dashboard could not refresh saved workflow configurations right now.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void refetchConfigs()}
+                      disabled={isConfigsFetching}
+                      aria-label="Retry saved workflow configs"
+                    >
+                      {isConfigsFetching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      Retry configs
+                    </Button>
+                  </div>
                 </AlertDescription>
               </Alert>
             ) : null}
