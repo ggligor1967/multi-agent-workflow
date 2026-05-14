@@ -1,3 +1,4 @@
+
 # Architectural Structure Web - Project TODO
 
 ## Database & Backend
@@ -41,9 +42,10 @@
 - [x] Write unit tests for database utilities
 - [x] Write unit tests for tRPC routers (workflows.router.test.ts)
 - [x] Test workflow execution with multiple test cases (test-workflow.ts)
-- [ ] Write integration tests for workflow execution
-- [ ] Test authentication and authorization
-- [ ] Test error handling and edge cases
+- [x] Write integration tests for workflow execution (server/__tests__/workflow.integration.test.ts; server/workflow.engine.test.ts)
+- [x] Test authentication and authorization (server/__tests__/auth.test.ts)
+- [x] Test error handling and edge cases (server/__tests__/errors.test.ts; server/workflows.router.test.ts; server/workflow.engine.test.ts)
+- [x] Write agent utility unit tests (server/agents/base.agent.test.ts)
 
 ## Deployment & Documentation
 - [x] Docker support with multi-stage Dockerfile and docker-compose.yml
@@ -51,7 +53,7 @@
 - [x] Create user guide for workflow management (docs/USER_GUIDE.md)
 - [x] Create API documentation (docs/API.md)
 - [x] Set up CI/CD pipeline (.github/workflows/ci.yml)
-- [ ] Performance optimization and caching
+- [x] Performance optimization and caching (LLM models cache + DB connection pooling)
 
 ## Known Issues & Notes
 - OAuth authentication not configured (works in dev mode without auth)

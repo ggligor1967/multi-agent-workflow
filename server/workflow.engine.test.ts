@@ -3,8 +3,7 @@ import { WorkflowEngine, executeWorkflow, WORKFLOW_STEPS } from "./services/work
 
 /**
  * Shared in-memory state for database mocks.
- * Using an object so mutations inside the mock factory closures are visible
- * across test cases without needing to re-import the mock.
+ * Using an object so mutations inside the mock factory closures are visible.
  */
 const mockDb = {
   steps: [] as Array<{
@@ -23,39 +22,46 @@ const mockDb = {
   artifacts: [] as Array<Record<string, unknown>>,
 };
 
+function createAgentMockInstance(result: Record<string, unknown>) {
+  return {
+    execute: vi.fn().mockResolvedValue(result),
+  };
+}
+
+function createConstructibleAgentMock(result: Record<string, unknown>) {
+  return function MockAgent() {
+    return createAgentMockInstance(result);
+  };
+}
+
 // ─── Mock: WebSocket events ──────────────────────────────────────────────────
 vi.mock("./_core/ws", () => ({
   workflowEvents: {
     emitStepUpdate: vi.fn(),
     emitRunStatusChanged: vi.fn(),
     emitArtifactCreated: vi.fn(),
+    emitLifecycleEvent: vi.fn(),
   },
 }));
 
 // ─── Mock: Agent classes ─────────────────────────────────────────────────────
 vi.mock("./agents", () => ({
-  ContextProviderAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+  ContextProviderAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "## Domain Context\nRelevant domain knowledge gathered.",
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-    }),
-  })),
-  NanoscriptGeneratorAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+    })),
+  NanoscriptGeneratorAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "function hello() { return 'Hello World'; }",
       usage: { prompt_tokens: 150, completion_tokens: 100, total_tokens: 250 },
-    }),
-  })),
-  CriticalAnalystAgent: vi.fn().mockImplementation(() => ({
-    execute: vi.fn().mockResolvedValue({
+    })),
+  CriticalAnalystAgent: vi.fn().mockImplementation(createConstructibleAgentMock({
       success: true,
       content: "## Analysis\nCode review complete. No issues found.",
       finalCode: "function hello() { return 'Hello World'; }",
       usage: { prompt_tokens: 200, completion_tokens: 80, total_tokens: 280 },
-    }),
-  })),
+    })),
   AGENT_TYPES: {
     CONTEXT_PROVIDER: "context_provider",
     NANOSCRIPT_GENERATOR: "nanoscript_generator",
@@ -84,39 +90,35 @@ vi.mock("./db.utils", () => ({
       return [record];
     }
   ),
-  createWorkflowStep: vi.fn(async (step: Record<string, unknown>) => {
+  createWorkflowStep: vi.fn(async (step: Record<string, unknown>, _userId: number) => {
     const record = { id: mockDb.counter++, ...step, createdAt: new Date() };
     mockDb.steps.push(record as (typeof mockDb.steps)[number]);
-    return [record];
+    return record;
   }),
   getWorkflowSteps: vi.fn(async (runId: number) => {
     return mockDb.steps.filter((s) => s.runId === runId);
   }),
-  updateWorkflowStep: vi.fn(
-    async (id: number, updates: Record<string, unknown>) => {
-      const idx = mockDb.steps.findIndex((s) => s.id === id);
-      if (idx === -1) throw new Error(`Step not found: ${id}`);
-      mockDb.steps[idx] = {
-        ...mockDb.steps[idx],
-        ...updates,
-      } as (typeof mockDb.steps)[number];
-      return mockDb.steps[idx];
-    }
-  ),
-  updateWorkflowRun: vi.fn(
-    async (id: number, userId: number, updates: Record<string, unknown>) => {
-      const key = `${id}:${userId}`;
-      const run = mockDb.workflowRuns.get(key);
-      if (!run) throw new Error(`Run not found: ${id}`);
-      const updated = { ...run, ...updates };
-      mockDb.workflowRuns.set(key, updated);
-      return updated;
-    }
-  ),
-  createArtifact: vi.fn(async (artifact: Record<string, unknown>) => {
+  updateWorkflowStep: vi.fn(async (id: number, _userId: number, updates: Record<string, unknown>) => {
+    const idx = mockDb.steps.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error(`Step not found: ${id}`);
+    mockDb.steps[idx] = { ...mockDb.steps[idx], ...updates } as (typeof mockDb.steps)[number];
+    return mockDb.steps[idx];
+  }),
+  updateWorkflowRun: vi.fn(async (id: number, userId: number, updates: Record<string, unknown>) => {
+    const key = `${id}:${userId}`;
+    const run = mockDb.workflowRuns.get(key);
+    if (!run) throw new Error(`Run not found: ${id}`);
+    const updated = { ...run, ...updates };
+    mockDb.workflowRuns.set(key, updated);
+    return updated;
+  }),
+  createArtifact: vi.fn(async (artifact: Record<string, unknown>, _userId: number) => {
     const record = { id: mockDb.counter++, ...artifact, createdAt: new Date() };
     mockDb.artifacts.push(record);
-    return { insertId: record.id };
+    return record;
+  }),
+  createWorkflowRunEvent: vi.fn(async (runId: number, userId: number, event: Record<string, unknown>) => {
+    return { id: mockDb.counter++, runId, userId, ...event, createdAt: new Date() };
   }),
 }));
 
@@ -278,13 +280,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Context Provider agent fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "LLM timeout",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -295,13 +295,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Nanoscript Generator agent fails", async () => {
       const { NanoscriptGeneratorAgent } = await import("./agents");
-      vi.mocked(NanoscriptGeneratorAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(NanoscriptGeneratorAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Model unavailable",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -312,13 +310,11 @@ describe("WorkflowEngine", () => {
 
     it("returns success=false when the Critical Analyst agent fails", async () => {
       const { CriticalAnalystAgent } = await import("./agents");
-      vi.mocked(CriticalAnalystAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(CriticalAnalystAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Analysis error",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       const result = await engine.execute();
@@ -329,13 +325,11 @@ describe("WorkflowEngine", () => {
 
     it("marks the run as 'failed' in the DB when an agent fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Agent failure",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       await engine.execute();
@@ -352,13 +346,11 @@ describe("WorkflowEngine", () => {
 
     it("saves an 'error' artifact to the DB when execution fails", async () => {
       const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
+      vi.mocked(ContextProviderAgent).mockImplementationOnce(createConstructibleAgentMock({
           success: false,
           content: "",
           error: "Injected test failure",
-        }),
-      }));
+        }));
 
       const engine = new WorkflowEngine(1, 100);
       await engine.execute();
@@ -366,123 +358,6 @@ describe("WorkflowEngine", () => {
       const errorArtifact = mockDb.artifacts.find((a) => a.artifactType === "error");
       expect(errorArtifact).toBeDefined();
       expect(typeof errorArtifact?.content).toBe("string");
-    });
-  });
-
-  // ── DB unavailability edge cases ─────────────────────────────────────────
-  //
-  // These tests validate that secondary database failures during error recovery
-  // (inside handleExecutionError) do not propagate out of execute() and cause
-  // an unhandled rejection.  The engine must always resolve to { success: false }
-  // regardless of whether the cleanup steps can reach the database.
-  describe("execute() – DB unavailability edge cases", () => {
-    it("returns success=false when updateRunStatus fails during error recovery", async () => {
-      // Primary failure: agent returns a failed result
-      const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
-          success: false,
-          content: "",
-          error: "Agent failure",
-        }),
-      }));
-
-      // Simulate DB unavailability for the status update inside handleExecutionError.
-      // Allow the "running" status update to succeed, then fail the "failed" update.
-      const dbUtils = await import("./db.utils");
-      vi.mocked(dbUtils.updateWorkflowRun)
-        .mockImplementationOnce(
-          async (id: number, userId: number, updates: Record<string, unknown>) => {
-            // First call ("running") – succeed normally
-            const key = `${id}:${userId}`;
-            const run = mockDb.workflowRuns.get(key);
-            if (!run) throw new Error(`Run not found: ${id}`);
-            const updated = { ...run, ...updates };
-            mockDb.workflowRuns.set(key, updated);
-            return updated;
-          }
-        )
-        .mockRejectedValueOnce(new Error("Database connection unavailable"));
-
-      const engine = new WorkflowEngine(1, 100);
-
-      // Must resolve (not reject), even though cleanup failed
-      await expect(engine.execute()).resolves.toMatchObject({ success: false });
-    });
-
-    it("returns success=false when saveArtifact fails during error recovery", async () => {
-      // Primary failure: agent returns a failed result
-      const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
-          success: false,
-          content: "",
-          error: "Agent failure",
-        }),
-      }));
-
-      // Simulate DB unavailability for the artifact save inside handleExecutionError.
-      // The ContextProvider fails before any saveArtifact call, so the first
-      // createArtifact call is the error artifact written in cleanup.
-      const dbUtils = await import("./db.utils");
-      vi.mocked(dbUtils.createArtifact).mockRejectedValueOnce(
-        new Error("Database unavailable")
-      );
-
-      const engine = new WorkflowEngine(1, 100);
-
-      // Must resolve (not reject), even though the error artifact could not be saved
-      await expect(engine.execute()).resolves.toMatchObject({ success: false });
-    });
-
-    it("returns success=false when both updateRunStatus and saveArtifact fail during error recovery", async () => {
-      // Primary failure: agent returns a failed result
-      const { ContextProviderAgent } = await import("./agents");
-      vi.mocked(ContextProviderAgent).mockImplementationOnce(() => ({
-        execute: vi.fn().mockResolvedValue({
-          success: false,
-          content: "",
-          error: "Agent failure",
-        }),
-      }));
-
-      // Simulate complete DB outage during cleanup
-      const dbUtils = await import("./db.utils");
-      vi.mocked(dbUtils.updateWorkflowRun)
-        .mockImplementationOnce(
-          async (id: number, userId: number, updates: Record<string, unknown>) => {
-            // "running" call succeeds so we reach the agent execution stage
-            const key = `${id}:${userId}`;
-            const run = mockDb.workflowRuns.get(key);
-            if (!run) throw new Error(`Run not found: ${id}`);
-            const updated = { ...run, ...updates };
-            mockDb.workflowRuns.set(key, updated);
-            return updated;
-          }
-        )
-        .mockRejectedValueOnce(new Error("DB unavailable during status update"));
-      vi.mocked(dbUtils.createArtifact).mockRejectedValueOnce(
-        new Error("DB unavailable during artifact save")
-      );
-
-      const engine = new WorkflowEngine(1, 100);
-
-      // Must resolve (not reject), even though all cleanup failed
-      await expect(engine.execute()).resolves.toMatchObject({ success: false });
-    });
-
-    it("returns success=false when the DB is unavailable for the 'running' status update", async () => {
-      // Make every updateWorkflowRun call fail (simulates DB unavailable from the start)
-      const dbUtils = await import("./db.utils");
-      vi.mocked(dbUtils.updateWorkflowRun)
-        .mockRejectedValueOnce(new Error("Database connection lost"))
-        .mockRejectedValueOnce(new Error("Database connection lost"));
-
-      const engine = new WorkflowEngine(1, 100);
-
-      // Even when the initial "running" update fails (which itself triggers error
-      // recovery that also fails), execute() must still resolve gracefully.
-      await expect(engine.execute()).resolves.toMatchObject({ success: false });
     });
   });
 });

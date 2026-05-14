@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -6,24 +6,126 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Play, ArrowLeft, Sparkles, Brain, Code, Search } from "lucide-react";
-import { useLocation } from "wouter";
+import {
+  Loader2,
+  Play,
+  ArrowLeft,
+  ArrowRight,
+  Sparkles,
+  Brain,
+  CheckCircle2,
+  Code,
+  History,
+  Search,
+} from "lucide-react";
+import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
+
+type LauncherWorkflowConfig = {
+  id: number;
+  initialTask: string;
+  llmModel: string | null | undefined;
+};
+
+type LauncherPrefillState = {
+  selectedConfig: string;
+  initialTask: string;
+  selectedModel: string;
+};
+
+type RunCreateInput = {
+  configId?: number;
+  initialTask: string;
+  modelId?: string;
+};
+
+type LaunchSuccessState = {
+  runId: number | null;
+};
+
+export function parsePositiveConfigId(search: string): number | null {
+  const rawConfigId = new URLSearchParams(search).get("configId");
+  if (!rawConfigId) return null;
+
+  const configId = Number(rawConfigId);
+  return Number.isInteger(configId) && configId > 0 ? configId : null;
+}
+
+export function resolveAvailableModel(
+  savedModel: string | null | undefined,
+  availableModels: string[]
+): string {
+  if (savedModel && availableModels.includes(savedModel)) {
+    return savedModel;
+  }
+
+  return availableModels[0] ?? "";
+}
+
+export function buildConfigPrefillState(
+  config: LauncherWorkflowConfig,
+  availableModels: string[]
+): LauncherPrefillState {
+  return {
+    selectedConfig: config.id.toString(),
+    initialTask: config.initialTask,
+    selectedModel: resolveAvailableModel(config.llmModel, availableModels),
+  };
+}
+
+export function shouldApplyUrlConfigPrefill(
+  urlConfigId: number | null,
+  lastPrefilledConfigId: number | null,
+  modelsLoading: boolean
+): boolean {
+  return Boolean(urlConfigId) && !modelsLoading && lastPrefilledConfigId !== urlConfigId;
+}
+
+export function buildRunCreateInput(
+  selectedConfig: string,
+  initialTask: string,
+  selectedModel: string,
+  availableModels: string[]
+): RunCreateInput {
+  const selectedConfigId = selectedConfig ? Number(selectedConfig) : undefined;
+  const configId =
+    selectedConfigId !== undefined &&
+    Number.isInteger(selectedConfigId) &&
+    selectedConfigId > 0
+      ? selectedConfigId
+      : undefined;
+
+  return {
+    configId,
+    initialTask: initialTask.trim(),
+    modelId:
+      selectedModel && availableModels.includes(selectedModel)
+        ? selectedModel
+        : undefined,
+  };
+}
 
 export default function WorkflowLauncher() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const search = useSearch();
+  const lastPrefilledConfigId = useRef<number | null>(null);
 
   const [selectedConfig, setSelectedConfig] = useState<string>("");
   const [initialTask, setInitialTask] = useState("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [launchSuccess, setLaunchSuccess] = useState<LaunchSuccessState | null>(null);
+
+  const urlConfigId = useMemo(() => {
+    return parsePositiveConfigId(search);
+  }, [search]);
 
   // Fetch saved configurations
   const { data: configsResult, isLoading: configsLoading } = trpc.workflow.configs.list.useQuery(
     undefined,
     { enabled: isAuthenticated }
   );
-  const configs = configsResult?.data || [];
+  const configs = configsResult?.data ?? [];
 
   // Fetch available models
   const { data: modelsResult, isLoading: modelsLoading } = trpc.workflow.getAvailableModels.useQuery(
@@ -33,17 +135,51 @@ export default function WorkflowLauncher() {
   const availableModels = modelsResult?.data ?? ["llama3.2:latest"];
 
   useEffect(() => {
-    if (availableModels.length > 0 && !selectedModel) {
+    if (
+      !modelsLoading &&
+      availableModels.length > 0 &&
+      (!selectedModel || !availableModels.includes(selectedModel))
+    ) {
       setSelectedModel(availableModels[0]);
     }
-  }, [availableModels, selectedModel]);
+  }, [availableModels, modelsLoading, selectedModel]);
+
+  useEffect(() => {
+    if (!urlConfigId) {
+      lastPrefilledConfigId.current = null;
+      return;
+    }
+
+    if (
+      !shouldApplyUrlConfigPrefill(
+        urlConfigId,
+        lastPrefilledConfigId.current,
+        modelsLoading
+      )
+    ) {
+      return;
+    }
+
+    const config = configs.find((item) => item.id === urlConfigId);
+    if (!config) {
+      return;
+    }
+
+    const prefillState = buildConfigPrefillState(config, availableModels);
+    setSelectedConfig(prefillState.selectedConfig);
+    setInitialTask(prefillState.initialTask);
+    setSelectedModel(prefillState.selectedModel);
+    lastPrefilledConfigId.current = urlConfigId;
+  }, [availableModels, configs, modelsLoading, urlConfigId]);
 
   // Create run mutation
   const createRunMutation = trpc.workflow.runs.create.useMutation({
     onSuccess: (result) => {
-      if (result.success && result.data?.id) {
-        toast.success("Workflow launched! Redirecting to monitor...");
-        navigate(`/runs/${result.data.id}`);
+      if (result.success) {
+        setLaunchSuccess({
+          runId: typeof result.data?.id === "number" ? result.data.id : null,
+        });
+        toast.success("Workflow created successfully.");
       } else {
         toast.error(result.error || "Failed to launch workflow");
       }
@@ -68,11 +204,25 @@ export default function WorkflowLauncher() {
       return;
     }
 
-    createRunMutation.mutate({
-      configId: selectedConfig ? parseInt(selectedConfig) : undefined,
-      initialTask: initialTask.trim(),
-      modelId: selectedModel || undefined,
-    });
+    createRunMutation.mutate(
+      buildRunCreateInput(selectedConfig, initialTask, selectedModel, availableModels)
+    );
+  };
+
+  const primarySuccessPath = launchSuccess?.runId
+    ? `/runs/${launchSuccess.runId}`
+    : "/history";
+
+  const handleConfigChange = (configId: string) => {
+    setSelectedConfig(configId);
+
+    const parsedConfigId = Number(configId);
+    const config = configs.find((item) => item.id === parsedConfigId);
+    if (!config) return;
+
+    const prefillState = buildConfigPrefillState(config, availableModels);
+    setInitialTask(prefillState.initialTask);
+    setSelectedModel(prefillState.selectedModel);
   };
 
   if (!isAuthenticated) {
@@ -107,11 +257,50 @@ export default function WorkflowLauncher() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleLaunch} className="space-y-6">
+            {launchSuccess ? (
+              <div role="status" aria-live="polite" className="space-y-6">
+                <div className="rounded-lg border border-green-200 bg-green-50 p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="rounded-full bg-green-100 p-2">
+                      <CheckCircle2 className="h-5 w-5 text-green-700" />
+                    </div>
+                    <div className="space-y-2">
+                      <h2 className="text-lg font-semibold text-green-950">
+                        Workflow created successfully
+                      </h2>
+                      <p className="text-sm text-green-900">
+                        {launchSuccess.runId
+                          ? `Run ID: ${launchSuccess.runId}. Open the run monitor to follow execution live, or use history to revisit it later.`
+                          : "The run was created successfully. Open execution history to continue from the newly created run."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4">
+                  <Button onClick={() => navigate(primarySuccessPath)} className="gap-2">
+                    <ArrowRight className="h-4 w-4" />
+                    {launchSuccess.runId ? "Open Run Monitor" : "View Execution History"}
+                  </Button>
+                  {launchSuccess.runId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate("/history")}
+                      className="gap-2"
+                    >
+                      <History className="h-4 w-4" />
+                      View History
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleLaunch} className="space-y-6">
               {/* Configuration Selection */}
               <div className="space-y-2">
                 <Label htmlFor="config">Use Saved Configuration (Optional)</Label>
-                <Select value={selectedConfig} onValueChange={setSelectedConfig}>
+                <Select value={selectedConfig} onValueChange={handleConfigChange}>
                   <SelectTrigger id="config" disabled={configsLoading}>
                     <SelectValue placeholder="Select a configuration..." />
                   </SelectTrigger>
@@ -233,7 +422,8 @@ export default function WorkflowLauncher() {
                   Cancel
                 </Button>
               </div>
-            </form>
+              </form>
+            )}
           </CardContent>
         </Card>
       </div>

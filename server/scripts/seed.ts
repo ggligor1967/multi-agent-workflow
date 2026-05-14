@@ -14,7 +14,7 @@
 
 import { drizzle } from "drizzle-orm/mysql2";
 import { sql } from "drizzle-orm";
-import { agentConfigs, workflowConfigs } from "../../drizzle/schema";
+import { agentConfigs, users, workflowConfigs } from "../../drizzle/schema";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -40,6 +40,7 @@ function log(message: string, color: keyof typeof colors = "reset") {
 
 // System user ID for seeded data (0 = system/global templates)
 const SYSTEM_USER_ID = 0;
+const SYSTEM_USER_OPEN_ID = "__system__";
 
 /**
  * Agent configuration seed data
@@ -143,6 +144,30 @@ async function seed() {
     // Test connection
     await db.execute(sql`SELECT 1`);
     log("✓ Database connected successfully", "green");
+
+    // Reserve userId=0 for system-owned templates so FK constraints remain valid.
+    await db.execute(
+      sql.raw(
+        "SET SESSION sql_mode = CONCAT_WS(',', @@SESSION.sql_mode, 'NO_AUTO_VALUE_ON_ZERO')"
+      )
+    );
+    await db.insert(users).values({
+      id: SYSTEM_USER_ID,
+      openId: SYSTEM_USER_OPEN_ID,
+      name: "System Templates",
+      loginMethod: "system",
+      role: "admin",
+    }).onDuplicateKeyUpdate({
+      set: {
+        openId: SYSTEM_USER_OPEN_ID,
+        name: "System Templates",
+        loginMethod: "system",
+        role: "admin",
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+        lastSignedIn: sql`CURRENT_TIMESTAMP`,
+      },
+    });
+    log("✓ System template user ensured", "green");
 
     // Clear existing data if requested
     if (shouldClear) {

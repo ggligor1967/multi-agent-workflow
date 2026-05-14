@@ -3,17 +3,12 @@ import type { AgentConfig } from "../../drizzle/schema";
 import { BaseAgent, type AgentContext, type AgentResult } from "./base.agent";
 import type { Tool } from "../_core/llm";
 
-// Mock the LLM module so no real HTTP calls are made during tests
+// Mock the LLM invocation so no real HTTP calls are made
 vi.mock("../_core/llm", () => ({
   invokeLLM: vi.fn(),
 }));
 
 // ─── Minimal concrete subclass for testing protected methods ─────────────────
-//
-// BaseAgent is abstract, so we create a minimal TestAgent that exposes the
-// protected helper methods as public wrappers, enabling direct unit testing
-// without going through the full agent execution pipeline.
-
 const MOCK_CONFIG: AgentConfig = {
   id: 1,
   userId: 1,
@@ -40,31 +35,25 @@ class TestAgent extends BaseAgent {
     return { success: true, content: "test" };
   }
 
-  // ── Public wrappers for protected helpers ──────────────────────────────────
-
-  /** @see BaseAgent.toStringArray */
+  // ── Expose protected helpers for testing ──────────────────────────────────
   public testToStringArray(value: unknown): string[] {
     return this.toStringArray(value);
   }
 
-  /** @see BaseAgent.tryParseJson */
   public testTryParseJson(str: string): Record<string, unknown> | null {
     return this.tryParseJson(str);
   }
 
-  /** @see BaseAgent.parseToolCallFromContent */
   public testParseToolCallFromContent(
     content: string
   ): Record<string, unknown> | null {
     return this.parseToolCallFromContent(content);
   }
 
-  /** @see BaseAgent.extractCodeFromMalformedJson */
   public testExtractCodeFromMalformedJson(content: string): string | null {
     return this.extractCodeFromMalformedJson(content);
   }
 
-  /** @see BaseAgent.parseAllToolCallsFromContent */
   public testParseAllToolCallsFromContent(
     content: string
   ): Array<Record<string, unknown>> {
@@ -75,33 +64,24 @@ class TestAgent extends BaseAgent {
 const agent = new TestAgent(MOCK_CONFIG);
 
 // ─── toStringArray ────────────────────────────────────────────────────────────
-//
-// toStringArray converts heterogeneous values (arrays, JSON strings, CSV strings,
-// bare strings, nullish) into a uniform string[].  It is used by all three agents
-// to normalise tool-call output before further processing.
-
 describe("BaseAgent.toStringArray", () => {
-  it("returns [] for null, undefined, and other falsy values", () => {
-    // Guard against nullish values passed from LLM output that lacks expected fields
+  it("returns [] for null / undefined / falsy values", () => {
     expect(agent.testToStringArray(null)).toEqual([]);
     expect(agent.testToStringArray(undefined)).toEqual([]);
     expect(agent.testToStringArray(0)).toEqual([]);
     expect(agent.testToStringArray("")).toEqual([]);
   });
 
-  it("converts each element of a native array to a string", () => {
-    // String arrays are returned unchanged; numeric arrays are stringified
+  it("maps a native array to string array", () => {
     expect(agent.testToStringArray(["a", "b", "c"])).toEqual(["a", "b", "c"]);
     expect(agent.testToStringArray([1, 2, 3])).toEqual(["1", "2", "3"]);
   });
 
-  it("parses a JSON-serialised array string into a string array", () => {
-    // LLMs sometimes return arrays serialised as JSON strings
+  it("parses a JSON-serialised array string", () => {
     expect(agent.testToStringArray('["x","y"]')).toEqual(["x", "y"]);
   });
 
-  it("splits a comma-separated string into trimmed, non-empty tokens", () => {
-    // Handles the common "a, b, c" pattern returned by LLMs for list fields
+  it("splits a comma-separated string", () => {
     expect(agent.testToStringArray("foo, bar, baz")).toEqual([
       "foo",
       "bar",
@@ -109,90 +89,71 @@ describe("BaseAgent.toStringArray", () => {
     ]);
   });
 
-  it("wraps a plain single string in a single-element array", () => {
-    // A non-empty, non-CSV string is treated as one item
+  it("wraps a plain single string in an array", () => {
     expect(agent.testToStringArray("hello")).toEqual(["hello"]);
   });
 
-  it("returns [] for a whitespace-only string", () => {
-    // Whitespace is treated as empty, matching the trim().filter(Boolean) behaviour
+  it("ignores whitespace-only strings", () => {
     expect(agent.testToStringArray("   ")).toEqual([]);
   });
 });
 
 // ─── tryParseJson ─────────────────────────────────────────────────────────────
-//
-// tryParseJson attempts to parse a string as JSON, applying light repair
-// heuristics for common LLM output malformations before giving up.
-
 describe("BaseAgent.tryParseJson", () => {
-  it("parses well-formed JSON without any repair", () => {
+  it("parses valid JSON", () => {
     const result = agent.testTryParseJson('{"key":"value"}');
     expect(result).toEqual({ key: "value" });
   });
 
-  it("returns null for completely invalid JSON (no repair possible)", () => {
+  it("returns null for completely invalid JSON", () => {
     expect(agent.testTryParseJson("not json at all")).toBeNull();
   });
 
-  it("repairs a trailing comma before a closing brace", () => {
-    // Common LLM output: extra trailing comma in objects
+  it("repairs trailing comma before closing brace", () => {
     const result = agent.testTryParseJson('{"key":"value",}');
     expect(result).toEqual({ key: "value" });
   });
 
-  it("repairs a trailing comma before a closing bracket", () => {
-    // Common LLM output: extra trailing comma in arrays
+  it("repairs trailing comma before closing bracket", () => {
     const result = agent.testTryParseJson('{"arr":["a","b",]}');
     expect(result).toEqual({ arr: ["a", "b"] });
   });
 
   it("repairs unquoted property names (simple case)", () => {
-    // Some LLMs omit quotes around property names
     const result = agent.testTryParseJson('{key:"value"}');
     expect(result).toEqual({ key: "value" });
   });
 });
 
 // ─── parseToolCallFromContent ─────────────────────────────────────────────────
-//
-// parseToolCallFromContent handles the variety of formats in which an LLM may
-// return a JSON tool-call: plain JSON, markdown-fenced JSON, or JSON embedded
-// in prose.
-
 describe("BaseAgent.parseToolCallFromContent", () => {
-  it("parses a plain JSON object from content", () => {
-    const result = agent.testParseToolCallFromContent(
-      '{"name":"test","value":1}'
-    );
+  it("parses a plain JSON object", () => {
+    const result = agent.testParseToolCallFromContent('{"name":"test","value":1}');
     expect(result).toEqual({ name: "test", value: 1 });
   });
 
-  it("parses JSON wrapped in a ```json code block", () => {
-    const content =
-      '```json\n{"name":"provide_context","domain_context":"test"}\n```';
+  it("parses JSON wrapped in a markdown json code block", () => {
+    const content = '```json\n{"name":"provide_context","domain_context":"test"}\n```';
     const result = agent.testParseToolCallFromContent(content);
     expect(result).toMatchObject({ name: "provide_context" });
   });
 
-  it("parses JSON wrapped in a plain ``` code block", () => {
+  it("parses JSON wrapped in a plain markdown code block", () => {
     const content = '```\n{"key":"value"}\n```';
     const result = agent.testParseToolCallFromContent(content);
     expect(result).toEqual({ key: "value" });
   });
 
-  it("returns null for empty or whitespace-only content", () => {
+  it("returns null for empty content", () => {
     expect(agent.testParseToolCallFromContent("")).toBeNull();
     expect(agent.testParseToolCallFromContent("   ")).toBeNull();
   });
 
-  it("returns null when the content contains no JSON object", () => {
-    expect(
-      agent.testParseToolCallFromContent("plain text with no JSON")
-    ).toBeNull();
+  it("returns null when no JSON object is found", () => {
+    expect(agent.testParseToolCallFromContent("plain text with no JSON")).toBeNull();
   });
 
-  it("extracts the first JSON object from content mixed with prose", () => {
+  it("extracts the first JSON object from mixed text", () => {
     const content = 'Some preamble text\n{"code":"hello"}\nSome suffix';
     const result = agent.testParseToolCallFromContent(content);
     expect(result).toMatchObject({ code: "hello" });
@@ -200,59 +161,47 @@ describe("BaseAgent.parseToolCallFromContent", () => {
 });
 
 // ─── extractCodeFromMalformedJson ─────────────────────────────────────────────
-//
-// extractCodeFromMalformedJson applies four successive strategies to extract
-// source code from JSON that cannot be fully parsed.  This handles real-world
-// LLM output where code strings contain newlines, backticks, or nested braces
-// that break standard JSON parsing.
-
 describe("BaseAgent.extractCodeFromMalformedJson", () => {
-  it("extracts a code string from a well-formed 'code' property (strategy 1)", () => {
-    const content =
-      '{"name":"generate_code","code":"function add(a, b) { return a + b; }"}';
+  it("extracts code from a well-formed JSON code property", () => {
+    const content = '{"name":"generate_code","code":"function add(a, b) { return a + b; }"}';
     const result = agent.testExtractCodeFromMalformedJson(content);
     expect(result).toContain("function add");
   });
 
-  it("extracts code from a markdown code block embedded in a JSON string (strategy 1/4)", () => {
+  it("extracts code from a markdown code block within malformed JSON", () => {
     const content = '{"description":"test","code":"```ts\\nconst x = 1;\\n```"}';
+    // Strategy 1 regex should capture the code string value
     const result = agent.testExtractCodeFromMalformedJson(content);
     expect(result).not.toBeNull();
   });
 
-  it("extracts a function definition from content using keyword detection (strategy 3)", () => {
-    const content =
-      '{"description":"test"} function computeSum(a, b) { return a + b; }';
+  it("extracts a function definition directly from content", () => {
+    // Strategy 3: function definition must end with `}` at string end (or `};`)
+    const content = '{"description":"test"} function computeSum(a, b) { return a + b; }';
     const result = agent.testExtractCodeFromMalformedJson(content);
     expect(result).not.toBeNull();
     expect(result).toContain("computeSum");
   });
 
-  it("returns null when no recognisable code pattern is present", () => {
-    const result = agent.testExtractCodeFromMalformedJson(
-      "no code here at all"
-    );
+  it("returns null when no code pattern is found", () => {
+    const result = agent.testExtractCodeFromMalformedJson("no code here at all");
     expect(result).toBeNull();
   });
 });
 
 // ─── parseAllToolCallsFromContent ─────────────────────────────────────────────
-//
-// parseAllToolCallsFromContent collects every tool-call JSON object from an LLM
-// response that may contain multiple fenced code blocks or bare JSON objects.
-
 describe("BaseAgent.parseAllToolCallsFromContent", () => {
   it("returns an empty array for empty content", () => {
     expect(agent.testParseAllToolCallsFromContent("")).toEqual([]);
   });
 
-  it("returns an array with one item for a single JSON object", () => {
+  it("parses a single JSON object", () => {
     const result = agent.testParseAllToolCallsFromContent('{"key":"val"}');
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ key: "val" });
   });
 
-  it("extracts all JSON objects from multiple markdown code blocks", () => {
+  it("parses multiple JSON code blocks", () => {
     const content = [
       "```json",
       '{"name":"block1"}',

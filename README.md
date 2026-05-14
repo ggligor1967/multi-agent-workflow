@@ -4,492 +4,248 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![tRPC](https://img.shields.io/badge/tRPC-11-398CCB?logo=trpc&logoColor=white)](https://trpc.io/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_AI-000000?logo=ollama&logoColor=white)](https://ollama.ai/)
-[![OpenAI Compatible](https://img.shields.io/badge/OpenAI-Compatible-412991?logo=openai&logoColor=white)](https://openai.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Vite](https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
 
-> **Orchestrate specialized AI agents to collaboratively build, analyze, and refine software solutions.**
+Build software tasks through a three-agent workflow that gathers context, generates code, and critiques the result before presenting artifacts in a live dashboard.
 
-## 📖 Introduction
+## What the app does
 
-The **Multi-Agent AI Workflow Orchestrator** is a full-stack TypeScript application that coordinates multiple AI agents working together to accomplish complex software development tasks. Instead of relying on a single AI model, this system leverages a team of specialized agents—each with distinct roles and expertise—to produce higher-quality, more reliable outputs.
+When a user launches a workflow, the system runs three specialized agents in sequence:
 
-### How It Works
+1. **Context Provider** gathers domain constraints, relevant examples, and implementation hints.
+2. **Nanoscript Generator** produces the first code draft using the enriched context.
+3. **Critical Analyst** reviews the output for correctness, security concerns, and improvements.
 
-When you submit a task, the system orchestrates three specialized AI agents in sequence:
+Workflow runs are persisted in MySQL, exposed through tRPC, and updated in real time through WebSocket subscriptions plus persisted lifecycle events.
 
-1. **Context Provider** - Gathers domain knowledge, relevant examples, and constraints
-2. **Nanoscript Generator** - Produces initial code based on the enriched context
-3. **Critical Analyst** - Reviews the output for errors, security issues, and improvements
-
-This collaborative approach mimics how real development teams work, with each agent contributing its specialized expertise to the final result.
-
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Client["🖥️ Client (React + Vite)"]
-        UI[Web Dashboard]
-        WL[Workflow Launcher]
-        WM[Workflow Monitor]
-    end
-
-    subgraph Server["⚙️ Server (Express + tRPC)"]
-        API[tRPC API]
-        WE[Workflow Engine]
-        WS[WebSocket Server]
-    end
-
-    subgraph Agents["🤖 AI Agents"]
-        CP[Context Provider]
-        NG[Nanoscript Generator]
-        CA[Critical Analyst]
-    end
-
-    subgraph Storage["💾 Storage"]
-        DB[(MySQL Database)]
-        ART[Artifacts Store]
-    end
-
-    subgraph LLM["🧠 LLM Provider"]
-        OL[Ollama - Local]
-        OA[OpenAI Compatible]
-    end
-
-    UI --> API
-    WL --> API
-    WM --> WS
-
-    API --> WE
-    WE --> CP
-    CP --> NG
-    NG --> CA
-    CA --> ART
-
-    CP --> LLM
-    NG --> LLM
-    CA --> LLM
-
-    WE --> DB
-    ART --> DB
-    WS -.->|Real-time Updates| WM
-
-    style Client fill:#e1f5fe
-    style Server fill:#fff3e0
-    style Agents fill:#f3e5f5
-    style Storage fill:#e8f5e9
-    style LLM fill:#fce4ec
+flowchart LR
+    UI[React client] --> API[tRPC / Express API]
+    API --> DB[(MySQL / Drizzle)]
+    API --> QUEUE[Queued workflow run]
+    QUEUE --> WORKER[Workflow worker]
+    WORKER --> CP[Context Provider]
+    WORKER --> NG[Nanoscript Generator]
+    WORKER --> CA[Critical Analyst]
+    WORKER --> DB
+    DB --> WS[WebSocket + polling snapshot updates]
+    WS --> UI
 ```
 
-### Data Flow
+### Execution lifecycle
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant C as Client
-    participant S as Server
-    participant WE as Workflow Engine
-    participant CP as Context Provider
-    participant NG as Nanoscript Generator
-    participant CA as Critical Analyst
-    participant DB as Database
+Every run moves through the same high-level stages:
 
-    U->>C: Submit Task
-    C->>S: Create Workflow Run
-    S->>DB: Store Run Record
-    S->>WE: Start Execution
+1. `setup`
+2. `initialization`
+3. `orchestration`
+4. `synchronization`
 
-    WE->>CP: Gather Context
-    CP-->>WE: Domain Context + Examples
+The API creates a run in `pending` state, a worker claims it, the engine persists steps and artifacts, and the monitor page streams both live and persisted lifecycle updates.
 
-    WE->>NG: Generate Code
-    Note over NG: Uses context from CP
-    NG-->>WE: Initial Code
+## Key features
 
-    WE->>CA: Review & Refine
-    Note over CA: Analyzes for issues
-    CA-->>WE: Refined Output
+### Multi-agent workflow
 
-    WE->>DB: Store Artifacts
-    WE-->>C: Real-time Progress (WebSocket)
-    C-->>U: Display Results
-```
+- Three specialized agents with configurable prompts and models.
+- Saved workflow configurations and agent presets.
+- Persisted artifacts for context, generated code, analysis, and final output.
 
-## ✨ Key Features
+### Live monitoring
 
-### 🤖 Multi-Agent System
-- **Context Provider** - Enriches tasks with domain knowledge and relevant examples
-- **Nanoscript Generator** - Produces optimized code solutions
-- **Critical Analyst** - Reviews output for errors, security issues, and improvements
-- Configurable agent prompts and behaviors
+- WebSocket subscriptions on `/api/trpc`.
+- Persisted lifecycle events for queue, worker, engine, and step state changes.
+- Derived metrics such as queue latency, execution duration, and time to first artifact.
 
-### ⚡ Real-Time Updates
-- WebSocket-powered live progress tracking
-- Step-by-step workflow monitoring
-- Instant status notifications
+### Flexible LLM support
 
-### 🏠 Local AI Support
-- **Ollama Integration** - Run AI models locally for privacy and cost savings
-- Support for models like Llama 3.2, Mistral, DeepSeek, Qwen
-- No API keys required for local models
+- Works with any OpenAI-compatible endpoint.
+- Supports Ollama for fully local development.
+- Model discovery against Ollama-native and OpenAI-compatible APIs.
 
-### 🌐 Cloud AI Compatible
-- OpenAI-compatible API support
-- Works with any OpenAI-compatible endpoint
-- Flexible model selection per workflow
+### Worker-based execution
 
-### 🐳 Docker Support
-- One-command deployment with `docker-compose up`
-- Pre-configured MySQL database
-- Production-ready containerization
+- Workflow runs are queued instead of executing inline in the web request.
+- Embedded worker support in development.
+- Dedicated worker process support for Docker or production-style setups.
 
-### 🔒 Authentication
-- OAuth integration support
-- Development mode with quick login
-- Role-based access control (User/Admin)
+### Safer-by-default runtime
 
-### 📊 Workflow Management
-- Save and reuse workflow configurations
-- Track execution history
-- View and download generated artifacts
+- Ownership checks on workflow child resources.
+- Request body limited to `2mb`.
+- Production security headers including `Content-Security-Policy`.
+- Run-creation guard rails for active-run limits, burst limits, and model validation.
 
-## 📸 Screenshots
+## Requirements
 
-### Dashboard
-![Dashboard Screenshot](docs/images/dashboard.png)
-*Main dashboard showing workflow overview and quick actions*
+- Node.js 20+
+- pnpm 10+
+- MySQL 8+
+- Docker and Docker Compose for containerized setup
+- An LLM endpoint (Ollama or any OpenAI-compatible provider)
 
-### Workflow Launcher
-![Workflow Launcher Screenshot](docs/images/workflow-launcher.png)
-*Configure and launch new AI workflows*
+## Quick start with Docker
 
-### Workflow Monitor
-![Workflow Monitor Screenshot](docs/images/workflow-monitor.png)
-*Real-time progress tracking with step-by-step updates*
-
-### Results View
-![Results Screenshot](docs/images/results.png)
-*View generated artifacts and download outputs*
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Node.js** 20+ (for local development)
-- **Docker & Docker Compose** (for containerized deployment)
-- **Ollama** (optional, for local AI models)
-
----
-
-### Option A: Docker (Fastest) 🐳
-
-The quickest way to get started is using Docker Compose.
-
-#### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/multi-agent-workflow.git
-cd multi-agent-workflow
+git clone <repository-url>
+cd multi-agent-ai-workflow
 ```
 
-#### 2. Configure Environment
+### 2. Create `.env`
 
-Create a `.env` file in the root directory:
+Start from the example file:
+
+```bash
+cp .env.example .env
+```
+
+At minimum, configure:
+
+- `JWT_SECRET`
+- `BUILT_IN_FORGE_API_KEY`
+- optionally `BUILT_IN_FORGE_API_URL`
+
+For Ollama on the host machine, a typical configuration is:
 
 ```env
-# Required for JWT session encryption
-JWT_SECRET=your-super-secret-jwt-key-change-in-production
-
-# LLM Configuration (choose one)
-
-# Option 1: Ollama (Local AI - recommended for getting started)
-# Note: Ollama must be running on your host machine
+BUILT_IN_FORGE_API_URL=http://localhost:11434/v1
 BUILT_IN_FORGE_API_KEY=ollama
-
-# Option 2: OpenAI or compatible API
-# BUILT_IN_FORGE_API_URL=https://api.openai.com/v1
-# BUILT_IN_FORGE_API_KEY=sk-your-openai-key
-
-# Optional: OAuth configuration (leave empty for dev login)
-# OAUTH_SERVER_URL=https://your-oauth-server.com
-# OWNER_OPEN_ID=your-admin-open-id
-
-# Optional: Application ID
-VITE_APP_ID=multi-agent-workflow
+JWT_SECRET=replace-with-a-long-random-secret-of-at-least-32-characters
 ```
 
-#### 3. Start Ollama (if using local AI)
-
-Make sure Ollama is running on your host machine:
+### 3. Start the stack
 
 ```bash
-# Install Ollama from https://ollama.ai
-# Then pull a model:
-ollama pull llama3.2
-
-# Verify it's running:
-ollama list
-```
-
-#### 4. Launch the Stack
-
-```bash
-docker-compose up -d
-```
-
-This will:
-- Build the application container
-- Start a MySQL 8.0 database
-- Run database migrations automatically
-- Start the application on port **3005**
-
-#### 5. Access the Application
-
-Open [http://localhost:3005](http://localhost:3005) in your browser.
-
-Click **"Login"** to use dev mode authentication (no OAuth required).
-
-#### Docker Commands Reference
-
-```bash
-# Start the stack
-docker-compose up -d
-
-# View logs
-docker logs -f multi-agent-app
-
-# Stop the stack
-docker-compose down
-
-# Reset everything (including database)
-docker-compose down -v
 docker-compose up -d --build
 ```
 
----
+The compose file starts:
 
-### Option B: Local Development 💻
+- MySQL
+- the web application
+- a dedicated workflow worker
 
-For development with hot-reload and debugging.
+### 4. Open the app
 
-#### 1. Clone and Install Dependencies
+Visit `http://localhost:3005`.
+
+If `OAUTH_SERVER_URL` is empty, development login is available through `/api/dev-login` and the UI login flow.
+
+## Local development
+
+### 1. Install dependencies
 
 ```bash
-git clone https://github.com/your-username/multi-agent-workflow.git
-cd multi-agent-workflow
 pnpm install
 ```
 
-#### 2. Configure Environment
+### 2. Configure environment
 
-Create a `.env` file:
+Use `.env.example` as the template and provide a reachable MySQL instance plus LLM configuration.
 
-```env
-# Database connection (MySQL)
-DATABASE_URL=mysql://user:password@localhost:3306/multi_agent_workflow
-
-# LLM Configuration
-BUILT_IN_FORGE_API_URL=http://localhost:11434/v1
-BUILT_IN_FORGE_API_KEY=ollama
-
-# Security
-JWT_SECRET=dev-secret-change-in-production
-
-# Optional
-VITE_APP_ID=multi-agent-workflow-dev
-```
-
-#### 3. Set Up the Database
+### 3. Apply database changes
 
 ```bash
-# Create and apply migrations
 pnpm db:push
-
-# Seed sample data (optional)
-pnpm db:seed
 ```
 
-#### 4. Start Development Server
+### 4. Start the app
 
 ```bash
 pnpm dev
 ```
 
-The application will be available at [http://localhost:3000](http://localhost:3000).
+The dev server starts on `http://localhost:3000` by default and will automatically pick the next open port if `3000` is busy.
 
-#### Development Commands
+### 5. Optional: run a dedicated worker locally
 
-```bash
-# Type checking
-pnpm check
-
-# Run tests
-pnpm test
-
-# Build for production
-pnpm build
-
-# Start production build
-pnpm start
-
-# Database management
-pnpm db:push    # Apply schema changes
-pnpm db:seed    # Seed sample data
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-| Variable | Required | Description | Default |
-|----------|----------|-------------|---------|
-| `DATABASE_URL` | Yes* | MySQL connection string | *(set by Docker)* |
-| `BUILT_IN_FORGE_API_KEY` | Yes | API key for LLM provider (use `ollama` for local) | - |
-| `BUILT_IN_FORGE_API_URL` | No | LLM API endpoint | `http://localhost:11434/v1` |
-| `JWT_SECRET` | Yes | Secret for session encryption | - |
-| `OAUTH_SERVER_URL` | No | OAuth server URL (enables OAuth login) | - |
-| `OWNER_OPEN_ID` | No | OpenID of admin user | - |
-| `VITE_APP_ID` | No | Application identifier | `multi-agent-workflow` |
-| `PORT` | No | Server port | `3000` |
-
-*\* Automatically configured when using Docker Compose*
-
-### LLM Provider Configuration
-
-#### Ollama (Local)
-
-```env
-BUILT_IN_FORGE_API_URL=http://localhost:11434/v1
-BUILT_IN_FORGE_API_KEY=ollama
-```
-
-Recommended models:
-- `llama3.2` - Fast, general purpose
-- `mistral` - Good for code generation
-- `deepseek-r1:7b` - Reasoning focused
-- `qwen2.5-coder:7b` - Optimized for coding
-
-#### OpenAI
-
-```env
-BUILT_IN_FORGE_API_URL=https://api.openai.com/v1
-BUILT_IN_FORGE_API_KEY=sk-your-api-key
-```
-
-#### Other OpenAI-Compatible APIs
-
-```env
-BUILT_IN_FORGE_API_URL=https://your-provider.com/v1
-BUILT_IN_FORGE_API_KEY=your-api-key
-```
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| **Frontend** | React 19, Vite 5, TailwindCSS, shadcn/ui |
-| **Backend** | Express, tRPC 11, WebSocket |
-| **Database** | MySQL 8.0, Drizzle ORM |
-| **AI Integration** | Ollama, OpenAI-compatible APIs |
-| **Containerization** | Docker, Docker Compose |
-| **Language** | TypeScript 5 (strict mode) |
-
----
-
-## 📁 Project Structure
-
-```
-├── client/                 # React frontend (Vite)
-│   ├── src/
-│   │   ├── components/     # UI components (shadcn/ui)
-│   │   ├── pages/          # Route pages
-│   │   ├── hooks/          # React hooks
-│   │   ├── contexts/       # React contexts
-│   │   └── lib/            # Utilities (tRPC client)
-│   └── public/             # Static assets
-│
-├── server/                 # Express backend
-│   ├── _core/              # Core services
-│   │   ├── llm.ts          # LLM integration
-│   │   ├── trpc.ts         # tRPC setup
-│   │   └── env.ts          # Environment config
-│   ├── agents/             # AI agent implementations
-│   ├── services/           # Business logic
-│   └── routers.ts          # API routes
-│
-├── shared/                 # Shared types & constants
-│   ├── types.ts
-│   └── const.ts
-│
-├── drizzle/                # Database schema & migrations
-│   └── schema.ts
-│
-├── docker-compose.yml      # Docker orchestration
-├── Dockerfile              # Multi-stage build
-└── package.json
-```
-
----
-
-## 🧪 Testing
+If you want the web process and the worker process separated in development:
 
 ```bash
-# Run all tests
-pnpm test
+# in .env
+WORKFLOW_EMBEDDED_WORKER=false
 
-# Run tests in watch mode
-pnpm test -- --watch
+# terminal 1
+pnpm dev
 
-# Type checking
-pnpm check
+# terminal 2
+pnpm dev:worker
 ```
 
----
+## Environment variables
 
-## 🤝 Contributing
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | MySQL connection string. |
+| `BUILT_IN_FORGE_API_KEY` | Yes | API key for the configured LLM provider. Use `ollama` for local Ollama setups. |
+| `BUILT_IN_FORGE_API_URL` | No | Base URL for the OpenAI-compatible provider. If omitted, the app falls back to Manus Forge. |
+| `JWT_SECRET` | Yes | Cookie/session signing secret. Production requires a strong non-default value. |
+| `OAUTH_SERVER_URL` | No | Enables OAuth callback flow when set. Leave empty for dev login mode. |
+| `OWNER_OPEN_ID` | No | OpenID that should receive the admin role. |
+| `VITE_APP_ID` | No | Application identifier used by the frontend. |
+| `WORKFLOW_EMBEDDED_WORKER` | No | Enables the in-process worker. Defaults to `true` outside production. |
+| `WORKFLOW_WORKER_ID` | No | Explicit worker identifier. Defaults to `worker-<pid>`. |
+| `WORKFLOW_WORKER_POLL_INTERVAL_MS` | No | Worker polling interval in milliseconds. |
+| `WORKFLOW_WORKER_STALE_RUN_MS` | No | Threshold after which stale `running` runs are recovered as failed. |
+| `WORKFLOW_RUN_CREATE_WINDOW_MS` | No | Sliding window used for run-creation burst limiting. |
+| `WORKFLOW_RUN_CREATE_MAX_PER_WINDOW` | No | Maximum runs allowed per user inside the sliding window. |
+| `WORKFLOW_RUN_ACTIVE_LIMIT` | No | Maximum number of `pending` + `running` runs per user. |
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Scripts
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the web server in watch mode. |
+| `pnpm dev:worker` | Start the worker in watch mode. |
+| `pnpm worker` | Run the worker once outside watch mode. |
+| `pnpm build` | Build the client and bundle both server entrypoints. |
+| `pnpm start` | Start the built web server. |
+| `pnpm start:worker` | Start the built worker process. |
+| `pnpm check` | Run TypeScript type checking. |
+| `pnpm test` | Run the Vitest suite. |
+| `pnpm db:push` | Generate and apply Drizzle migrations. |
+| `pnpm db:seed` | Seed sample data. |
+| `pnpm test:llm` | Verify LLM connectivity. |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+## Repository layout
 
----
+```text
+client/          React SPA
+server/          Express, tRPC, workers, services, agents
+shared/          Shared constants and types
+drizzle/         Schema and SQL migrations
+docs/            User and API documentation
+docs_dev/        Audit and engineering notes
+```
 
-## 📚 Documentation
+## Documentation
 
 | Document | Description |
-|----------|-------------|
-| [README.md](README.md) | Project overview and quick start |
-| [User Guide](docs/USER_GUIDE.md) | Detailed usage instructions |
-| [API Reference](docs/API.md) | tRPC API documentation |
-| [Contributing](CONTRIBUTING.md) | Contribution guidelines |
+| --- | --- |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | End-user workflow guide. |
+| [docs/API.md](docs/API.md) | Current tRPC, WebSocket, and auth route documentation. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution rules and expectations. |
+| [CHANGELOG.md](CHANGELOG.md) | Project-level change log. |
 
----
+## Troubleshooting
 
-## 📄 License
+- If the UI loads but workflows do not run, check the worker logs first.
+- If model discovery fails, run `pnpm test:llm`.
+- If OAuth is not configured, use dev login mode instead of the callback route.
+- If `pnpm check` or `pnpm build` fail after schema changes, rerun `pnpm db:push` and restart the worker.
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## License
 
----
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- [Ollama](https://ollama.ai/) for making local AI accessible
-- [tRPC](https://trpc.io/) for end-to-end typesafe APIs
-- [shadcn/ui](https://ui.shadcn.com/) for beautiful UI components
-- [Drizzle ORM](https://orm.drizzle.team/) for type-safe database operations
-
----
-
-<p align="center">
-  <sub>Built with ❤️ using TypeScript, React, and AI</sub>
-</p>
+- [tRPC](https://trpc.io/)
+- [Drizzle ORM](https://orm.drizzle.team/)
+- [Ollama](https://ollama.ai/)
+- [shadcn/ui](https://ui.shadcn.com/)

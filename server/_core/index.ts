@@ -6,6 +6,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { closeDb } from "../db";
+import { startEmbeddedWorkflowWorker, type WorkflowWorker } from "../services/workflow.worker";
 import { serveStatic, setupVite } from "./vite";
 import { setupWebSocketServer, closeWebSocketServer } from "./ws";
 
@@ -31,9 +33,38 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  let embeddedWorkflowWorker: WorkflowWorker | null = null;
+  let isShuttingDown = false;
+
+  app.set("trust proxy", 1);
+
+  // Configure body parser with a constrained size limit for standard API usage.
+  app.use(express.json({ limit: "2mb" }));
+  app.use(express.urlencoded({ limit: "2mb", extended: true }));
+
+  if (process.env.NODE_ENV === "production") {
+    app.use((_req, res, next) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Frame-Options", "DENY");
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader(
+        "Content-Security-Policy",
+        [
+          "default-src 'self'",
+          "script-src 'self'",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data: https:",
+          "font-src 'self' data:",
+          "connect-src 'self' http: https: ws: wss:",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "frame-ancestors 'none'",
+        ].join("; ")
+      );
+      next();
+    });
+  }
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API
@@ -61,11 +92,30 @@ async function startServer() {
   // Set up WebSocket server for tRPC subscriptions
   setupWebSocketServer(server, appRouter);
 
+  embeddedWorkflowWorker = await startEmbeddedWorkflowWorker();
+
+  const shutdown = async () => {
+    if (isShuttingDown) {
+      return;
+    }
+
+    isShuttingDown = true;
+    closeWebSocketServer();
+    await embeddedWorkflowWorker?.stop();
+    await closeDb();
+
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
   // Handle graceful shutdown
   process.on("SIGINT", () => {
-    closeWebSocketServer();
-    server.close();
-    process.exit(0);
+    void shutdown();
+  });
+
+  process.on("SIGTERM", () => {
+    void shutdown();
   });
 
   server.listen(port, () => {

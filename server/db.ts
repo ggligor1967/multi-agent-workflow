@@ -1,21 +1,63 @@
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import type { MySql2Database } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
 import { InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: MySql2Database | null = null;
+let _pool: mysql.Pool | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+// =============================================================================
+// DATABASE CONNECTION POOLING
+// =============================================================================
+// Connection pool configuration for better performance
+const POOL_CONFIG = {
+  connectionLimit: 10,        // Maximum number of connections
+  queueLimit: 0,              // Unlimited queue
+  waitForConnections: true,   // Wait for available connection
+  enableKeepAlive: true,      // Keep connections alive
+  keepAliveInitialDelay: 10000, // 10 seconds
+};
+
+async function ensureDatabaseConnection(): Promise<void> {
+  if (_db || _pool || !ENV.databaseUrl) {
+    return;
   }
+
+  try {
+    _pool = mysql.createPool({
+      uri: ENV.databaseUrl,
+      ...POOL_CONFIG,
+    });
+    _db = drizzle(_pool);
+    console.log("[Database] Connection pool initialized");
+  } catch (error) {
+    console.warn("[Database] Failed to connect:", error);
+    _db = null;
+    _pool = null;
+  }
+}
+
+// Lazily create the drizzle instance with connection pooling
+export async function getDb(): Promise<MySql2Database | null> {
+  await ensureDatabaseConnection();
   return _db;
+}
+
+export async function getDbPool(): Promise<mysql.Pool | null> {
+  await ensureDatabaseConnection();
+  return _pool;
+}
+
+/** Close the database connection pool (for graceful shutdown) */
+export async function closeDb(): Promise<void> {
+  if (_pool) {
+    await _pool.end();
+    _pool = null;
+    _db = null;
+    console.log("[Database] Connection pool closed");
+  }
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
