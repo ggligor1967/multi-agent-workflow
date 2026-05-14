@@ -1,8 +1,8 @@
 /**
  * Centralized logging module.
  *
- * Provides structured, prefixed log output so messages from different modules
- * (WorkflowEngine, agents, router) are easy to filter and trace during debugging.
+ * Provides prefixed console log output for server modules that adopt it
+ * (currently workflow engine and agents), making logs easier to filter.
  *
  * Usage:
  *   import { createLogger } from "../_core/logger";
@@ -20,7 +20,7 @@ export interface Logger {
   info(message: string, ...args: unknown[]): void;
   /** Non-fatal warnings */
   warn(message: string, ...args: unknown[]): void;
-  /** Error messages with an optional cause (Error or descriptive string) */
+  /** Error messages with an optional cause; Error causes preserve stack traces */
   error(message: string, cause?: unknown): void;
 }
 
@@ -50,8 +50,11 @@ export function createLogger(prefix: string): Logger {
 
     error(message: string, cause?: unknown): void {
       if (cause !== undefined) {
-        const detail = cause instanceof Error ? cause.message : cause;
-        console.error(tag, `${message}:`, detail);
+        if (cause instanceof Error) {
+          console.error(tag, message, cause);
+        } else {
+          console.error(tag, `${message}:`, cause);
+        }
       } else {
         console.error(tag, message);
       }
